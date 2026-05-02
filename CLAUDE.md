@@ -29,7 +29,9 @@ discovery/          Device research — specs, SLD diagrams, source PDFs
 architecture/       System architecture and data model (drafts v0.1)
   data-model/
 requirements/       Questions for Johan (PRD not yet started)
+evaluations/        Vendor / build-vs-buy evaluations (e.g., teleport.md)
 OVERVIEW.md         Project purpose, scope, architecture summary — human entry point
+GLOSSARY.md         Cross-cutting reference: equipment, protocols, industry terms, our jargon
 README.md           Repo front door with navigation links
 CLAUDE.md           This file
 ```
@@ -89,6 +91,13 @@ Two tiers, different API surfaces:
 - MQTT: JSON push, topic configurable, QoS 1, TLS on port 8883, LWT supported
 - MQTT payload: `{gateway: {id, name}, device: {id, name}, readings: [{name, value, unit}]}`
 - Revenue-grade: Class 0.2/0.5, TOU 4 tariffs × 12 seasons × 14 schedules, 3 GB offline cache
+
+### AccuEnergy Acuvim II — separate product line
+- Stub spec: `discovery/specs/acuvim_ii_modbus_registers.md` (covers the `0x4000` Basic Real-time Parameters block)
+- **Different address space from Acuvim L** — real-time block at `0x4000`–`0x4047` (Float32, no scaling), not `0x0600`+
+- Same accuracy class (0.5S revenue-grade), same AXM-WEB2 / MQTT push behaviour
+- Edge agent is variant-aware via `meter_type: "acuvim_l" | "acuvim_ii"` config flag
+- Johan's existing Node-RED flow targets Acuvim II — confirm bench unit variant before locking register pollset
 
 ### Sinexcel PWS1-500K
 - Full spec: `discovery/specs/sinexcel_pws1_500k_protocol.md`

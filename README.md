@@ -19,6 +19,7 @@ Read [OVERVIEW.md](OVERVIEW.md) for the full picture — purpose, scope, archite
 | Document | Description |
 |----------|-------------|
 | [OVERVIEW.md](OVERVIEW.md) | Purpose, scope, architecture and data model summary, current phase |
+| [GLOSSARY.md](GLOSSARY.md) | Plain-language reference for every acronym, vendor, protocol, and piece of in-house jargon |
 | [requirements/QUESTIONS_FOR_JOHAN.md](requirements/QUESTIONS_FOR_JOHAN.md) | Structured questions to close before writing PRD — **next action** |
 
 ### Architecture
@@ -35,6 +36,12 @@ Read [OVERVIEW.md](OVERVIEW.md) for the full picture — purpose, scope, archite
 | [discovery/DISCOVERY_SUMMARY.md](discovery/DISCOVERY_SUMMARY.md) | Device ecosystem, site topology, architectural decisions, remaining gaps |
 | [discovery/DEVICE_SPECS_NEEDED.md](discovery/DEVICE_SPECS_NEEDED.md) | Per-device research checklist and status |
 | [discovery/documents/](discovery/documents/) | Original source documents (PDFs, SLD diagrams, reference UI screenshots) |
+
+### Vendor evaluations
+
+| Document | Description |
+|----------|-------------|
+| [evaluations/teleport.md](evaluations/teleport.md) | WithTheGrid Teleport — full build-vs-buy assessment (verdict: build our own; Teleport as fallback only) |
 
 ### Device Specifications
 

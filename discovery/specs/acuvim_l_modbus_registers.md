@@ -316,3 +316,30 @@ Each entry: 4 registers [value_HH, value_LL, date(yy/mm dd/hh), time(mm/ss)].
 |----------|-----------|---------|
 | 0x0180–0x0181 | Meter run time | ×0.1 hr (Dword) |
 | 0x0182–0x0183 | Load run time | ×0.1 hr (Dword) |
+
+---
+
+## 14. Device identity — none on the wire
+
+**Important:** The Acuvim L manual V2.0.3 (December 2025) documents **no identity registers** — no manufacturer code, model code, firmware version, or serial number is exposed via Modbus. Sister product Acuvim II exposes a SunSpec common-model block at `0xC350`+; the Acuvim L does not.
+
+**Implication for fingerprinting:** the edge agent identifies an Acuvim L via a **negative fingerprint** — read `0xC350` and expect a Modbus exception `0x02` (illegal data address) — combined with positive capability probes at `0x0130` (frequency, secondary) or `0x0600` (frequency, primary Float32).
+
+**Implication for site records:** capture serial number, firmware version, and Acuvim L sub-variant (`CL` / `DL` / `EL` / `KL`) from the **physical device label** or the **AXM-WEB2 web UI** at commissioning, and store them in the cloud `Device` record. There's no automated way to read these over Modbus.
+
+---
+
+## 15. Sub-variants — comms-capable Acuvim L
+
+The Acuvim L family has six sub-variants per the manual §1.4:
+
+| Variant | Comms? | I/O | Notes |
+|---------|--------|-----|-------|
+| `AL` | **No** | base | No comms port — out of scope for this project |
+| `BL` | **No** | base + 2 DO | No comms port — out of scope |
+| `CL` | RS485 | base | Comms-capable; standard install |
+| `DL` | RS485 | base + extended I/O | Comms-capable |
+| `EL` | RS485 | DL + TOU support | Comms-capable; needed for TOU billing features |
+| `KL` | RS485 | simplified CL | Comms-capable |
+
+**The Modbus register map is identical across CL / DL / EL / KL.** Sub-variant only affects which physical I/O is wired and (for EL) whether TOU energy registers are populated. Capture the variant at commissioning from the device label, not from the wire.
