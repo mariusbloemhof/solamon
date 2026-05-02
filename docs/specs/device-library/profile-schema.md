@@ -154,13 +154,21 @@ control:
     readback_register:         # optional; defaults to write address
       address: 0x010C
       offset: 0
+      fc: 3                    # optional; default 3 (read holding registers); use 4 for input registers
       format: word
     readback_delay_ms: 500     # optional; default 500
 ```
 
 Each writable register is keyed by its logical metric name (which MUST exist in the catalog with `is_writable: true`). The agent validates incoming control commands against `allowed_values` (catalog default OR profile override) before issuing the Modbus write.
 
-`readback_register` defaults to the write address with same format. Override when the device exposes the post-write value at a different address (some devices do).
+`readback_register` defaults to the write address with same format. Override when the device exposes the post-write value at a different address (some devices do). The `fc` field defaults to 3 (read holding registers); use 4 for input-register readback.
+
+**Tolerance for read-back comparison is hardcoded in the loader**, not a profile field:
+- For float formats: relative tolerance of 1 part in 10⁶ (well within Float32 precision).
+- For integer formats: exact equality.
+- For ASCII / custom formats: byte equality.
+
+Profiles cannot override this; if a device legitimately needs a wider tolerance (e.g., a meter that rounds setpoints), that's a loader-level enhancement, not per-profile config.
 
 ## 6. Supported format types
 
@@ -203,16 +211,30 @@ Format-appropriate alignment is **enforced by the loader at profile load time**,
 
 Misalignment fails with a clear error naming the offending metric.
 
-## 7. Profile loader semantics
+## 7. Profile loader (`lib/profile_loader/`)
 
-The loader is a single Python module shared between the edge agent ([SOL-7](https://linear.app/solamon/issue/SOL-7)) and the probe CLI ([SOL-18](https://linear.app/solamon/issue/SOL-18)). Cloud ingestion ([SOL-8](https://linear.app/solamon/issue/SOL-8)) imports the same module to validate incoming readings.
+The loader is a single Python module shared between the edge agent ([SOL-7](https://linear.app/solamon/issue/SOL-7)), the probe CLI ([SOL-18](https://linear.app/solamon/issue/SOL-18)), and cloud ingestion ([SOL-8](https://linear.app/solamon/issue/SOL-8)). It is THE owner of profile parsing, validation, decoding, and fingerprint-matching logic — every consumer goes through this same code path. **There is no second implementation, ever.**
 
-**Loader API (Python sketch):**
+The loader lives at `lib/profile_loader/` in the implementation tree (final path TBD by the writing-plans phase) and is packaged as a vendored Python module included in:
+- The edge-agent Docker image
+- The probe-cli pip package
+- The cloud's FastAPI process
+
+It has its own test suite covering: schema validation, format decoding, edge cases (offset alignment, unknown logical metrics, unsupported formats), and fingerprint matching against fake-Modbus-server fixtures for both Acuvim L (the canonical profile) and one synthetic non-matching profile.
+
+### 7.1 API
 
 ```python
+# In lib/profile_loader/__init__.py
+
 class ProfileLoader:
-    def load(profile_path: str, catalog_path: str) -> Profile: ...
-    def validate(profile: Profile, catalog: Catalog) -> ValidationResult: ...
+    """Loads + validates profile YAMLs and the logical-metric catalog."""
+
+    def load_catalog(self, catalog_path: str) -> Catalog: ...
+    def load_profile(self, profile_path: str, catalog: Catalog) -> Profile: ...
+    def register_decoder(self, name: str, decoder: CustomDecoder) -> None:
+        """Register a custom decoder (e.g. 'acuvim_clock'). Called at module init."""
+
 
 class Profile:
     schema_version: str
@@ -222,18 +244,75 @@ class Profile:
     read_blocks: list[ReadBlock]
     control: dict[str, ControlSpec]
 
-    def schedule(self) -> Iterable[ReadBlock]:
-        """Yields read blocks per cadence_s for the agent to schedule."""
+    def schedule(self) -> Iterable[tuple[ReadBlock, float]]:
+        """Yields (block, cadence_s) tuples for the agent to schedule."""
 
     def decode(self, block_name: str, response: bytes) -> dict[str, Reading]:
-        """Decodes a Modbus FC03 response into a dict keyed by logical metric name."""
+        """Decodes a Modbus FC03/FC04 response into a dict keyed by logical metric name.
+        Applies per-metric scale and produces (value, raw_value, quality) for each metric.
+        Raises DecodeError if response length doesn't match block length × 2 bytes."""
 
-    def fingerprint_match(self, modbus_client) -> FingerprintResult:
-        """Runs the fingerprint reads against a connected device. Returns match/mismatch + identifiers."""
+    async def fingerprint_match(self, modbus_client) -> FingerprintResult:
+        """Runs the fingerprint reads against a connected device. Returns:
+          - match: bool
+          - confidence: "positive" (all reads matched expected) | "negative_fingerprint" (used expect_exception)
+          - identifiers: dict[str, Any]  (manufacturer, model, firmware, serial — populated when available)
+          - failures: list[str]  (human-readable per-read failure reasons; empty on full match)
+        """
 
-    def validate_control(self, logical_metric: str, value: Any) -> bool:
-        """Validates a control command against allowed_values."""
+    def validate_control(self, logical_metric: str, value: Any) -> None:
+        """Validates a control command against allowed_values + catalog data_type.
+        Raises ValidationError on bad input (with a clear message). Returns None on success.
+
+        NOTE: this raises rather than returning bool — callers use try/except to handle
+        validation failures and surface the exception message to the user. Earlier drafts
+        specified bool return; updated 2026-05-02 in response to spec review."""
+
+
+class Catalog:
+    schema_version: str
+    metrics: dict[str, LogicalMetric]    # keyed by logical metric name
+
+    def get(self, key: str) -> LogicalMetric | None: ...
+    def all(self) -> list[LogicalMetric]: ...
+
+
+class CustomDecoder(Protocol):
+    """Vendor-specific decoder registered by name (e.g. 'acuvim_clock').
+    Profile loader calls this when it encounters format: custom + decoder: <name>."""
+
+    def decode(self, buffer: bytes, offset: int, length_bytes: int) -> Any: ...
+
+
+class ValidationError(Exception):
+    """Raised by validate_control on bad input. Message is operator-readable."""
+
+
+class DecodeError(Exception):
+    """Raised by Profile.decode when the response can't be decoded."""
+
+
+class FingerprintResult:
+    match: bool
+    confidence: Literal["positive", "negative_fingerprint", "none"]
+    identifiers: dict[str, Any]
+    failures: list[str]
 ```
+
+### 7.2 Decoders registered at module init
+
+The standard decoders (float32 variants, integer types, ASCII, dword_high_first) are built in. Custom decoders registered explicitly by callers — e.g., the edge agent's `__init__.py` does:
+
+```python
+from lib.profile_loader import ProfileLoader
+from lib.profile_loader.decoders import AcuvimClockDecoder
+
+loader = ProfileLoader()
+loader.register_decoder("acuvim_clock", AcuvimClockDecoder())
+# ... and any others as new device families come online
+```
+
+This keeps the schema enum stable while the decoder set evolves.
 
 ### 7.1 Validation on load
 

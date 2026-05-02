@@ -19,18 +19,21 @@ Only the local device's commands arrive on this Pi — no cross-device leakage e
 
 QoS 1 means we get at-least-once delivery; the subscriber must be idempotent (§5).
 
+> **Multi-device note:** the hardcoded single `device.id` in the topic filter is correct for MVP (one device per Pi). When [SOL-16](https://linear.app/solamon/issue/SOL-16) lands multi-device-per-Pi, this becomes a wildcard subscription `solamon/{slug}/commands/+` with per-message dispatch by `device_id` extracted from the topic.
+
 ## 2. Per-message handler
+
+The subscription set up in [`mqtt-publisher.md`](mqtt-publisher.md) §2 uses `client.messages_for_topic(...)` so this loop receives only commands for our device — no second-pass topic filter needed.
 
 ```python
 # Pseudo-code
 async def command_loop(client, messages):
     async for message in messages:
-        # Filter to the commands topic — other subscriptions share this iterator
-        if not message.topic.matches(f"solamon/{site.slug}/commands/{device.id}"):
-            continue
-
         try:
-            cmd = parse_command_payload(message.payload)
+            # Pydantic-validated against the cloud's command schema
+            # (mqtt-contracts.md §6).
+            cmd = CommandPayload.model_validate_json(message.payload)
+            cmd.received_at = now_utc()                  # injected at receive time
         except (ValueError, ValidationError) as e:
             log.error("command_parse_failed", error=str(e), payload=message.payload[:200])
             continue                                      # malformed; drop silently
@@ -39,7 +42,7 @@ async def command_loop(client, messages):
         await handle_command(client, cmd)
 ```
 
-`handle_command` is the heart of the path. It executes synchronously per command — we do NOT process commands in parallel because (a) Modbus writes are serialised on the bus anyway, and (b) writes followed by read-backs need to happen in order to be meaningful.
+`handle_command` is the heart of the path. It executes synchronously per command — we do NOT process commands in parallel because (a) Modbus writes are serialised on the bus anyway (pymodbus serialises operations on the shared TCP connection — a poll cycle in flight when a command arrives delays the write by up to ~5 s for the longest-timeout block, which is the worst-case latency operators should expect), and (b) writes followed by read-backs need to happen in order to be meaningful.
 
 ## 3. Validation
 
@@ -70,7 +73,7 @@ async def handle_command(client, cmd: CommandPayload):
     control_spec = profile.control[metric]
     value = cmd.parameters.get("value")
     try:
-        profile.validate_control(metric, value)           # checks allowed_values, type
+        profile.validate_control(metric, value)           # raises ValidationError on bad input
     except ValidationError as e:
         ack = build_failed_ack(cmd, status="failed", error=str(e))
         await publish_ack(client, ack)
@@ -123,13 +126,25 @@ async def execute_command(client, cmd, control_spec, value):
 
         # Read back
         readback_addr = control_spec.readback_register.address
-        readback_fc = control_spec.fc                     # convention: read with fc=3 regardless
+        # readback_register.fc defaults to 3 (read holding registers) when absent;
+        # see profile schema. For MVP we only have FC03-readable control registers
+        # (Acuvim L demand window is at 0x010C, holding-register space).
+        readback_fc = getattr(control_spec.readback_register, "fc", 3)
         readback_format = control_spec.readback_register.format
-        rb_result = await modbus.read_holding_registers(
-            address=readback_addr,
-            count=byte_length(readback_format) // 2,      # 1 reg for word/uint16, 2 for float32_be
-            slave=site_config.device.unit_id,
-        )
+        if readback_fc == 3:
+            rb_result = await modbus.read_holding_registers(
+                address=readback_addr,
+                count=register_count(readback_format),
+                slave=site_config.device.unit_id,
+            )
+        elif readback_fc == 4:
+            rb_result = await modbus.read_input_registers(
+                address=readback_addr,
+                count=register_count(readback_format),
+                slave=site_config.device.unit_id,
+            )
+        else:
+            raise ValueError(f"unsupported readback fc: {readback_fc}")
 
         if rb_result.isError():
             ack = build_failed_ack(cmd, status="failed",
@@ -142,14 +157,17 @@ async def execute_command(client, cmd, control_spec, value):
         rb_bytes = registers_to_bytes(rb_result.registers)
         rb_value = decode_value(rb_bytes, readback_format)
 
-        if values_equal(rb_value, value, tolerance=control_spec.format_tolerance):
+        # Tolerance is hardcoded in values_equal — float-eps relative for floats,
+        # exact comparison for ints. NOT a profile field (the profile schema
+        # has no `format_tolerance`).
+        if values_equal(rb_value, value):
             ack = build_confirmed_ack(cmd, confirmed_value={"value": rb_value},
-                                       write_at=write_at, readback_at=now())
+                                       write_at=write_at, readback_at=now_utc())
         else:
             ack = build_failed_ack(cmd, status="failed",
                                     error=f"readback_mismatch: expected={value}, got={rb_value}",
                                     confirmed_value={"value": rb_value},
-                                    write_at=write_at, readback_at=now())
+                                    write_at=write_at, readback_at=now_utc())
 
         await publish_ack(client, ack)
         recent_commands[cmd.id] = ack
@@ -164,19 +182,25 @@ async def execute_command(client, cmd, control_spec, value):
 
 ## 5. Idempotency
 
-`recent_commands` is an LRU cache (1000 entries, 5-minute TTL):
+`recent_commands` is an in-memory LRU cache (1000 entries, 5-minute TTL):
 
 ```python
 from cachetools import TTLCache
 recent_commands: TTLCache[UUID, AckPayload] = TTLCache(maxsize=1000, ttl=300)
 ```
 
+The 5-minute TTL is matched to the cloud's command TTL so duplicate deliveries within the meaningful window are guaranteed to dedup. Past 5 min, the command would be `expired` cloud-side and re-processing is moot. The 1000-entry cap is wildly more than MVP scale needs (~3.3 cmd/s sustained); no risk of capacity issues.
+
 Re-receipt of a command we've already processed:
 
 - If the command is still in the cache → re-emit the original ack with the original status.
 - If it's evicted → process as new.
 
-The 5-minute TTL is longer than the cloud's command TTL (5 min in MVP) so duplicate deliveries within the meaningful window are guaranteed to dedup. Past 5 min, the command would be `expired` cloud-side and re-processing is moot.
+> ### ⚠️ MVP-only safety: in-memory cache + idempotent commands
+>
+> The cache is **in-memory only — restart loses it**. Combined with QoS-1 broker redelivery (`clean_session=False`), the broker's persistent session can replay an unacknowledged command after the Pi reconnects post-restart, and the Pi will re-execute the Modbus write.
+>
+> **For MVP this is safe** because the only command type is `set_value` of `demand_window_minutes`, which is idempotent (writing 30 twice = the meter is at 30). When non-idempotent command types arrive (`start`, `stop`, `clear_fault`, `reset_counter`), this cache must be persisted to SQLite first — see [SOL-24](https://linear.app/solamon/issue/SOL-24).
 
 ## 6. Ack publish
 

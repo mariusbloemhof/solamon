@@ -291,8 +291,13 @@ SELECT create_hypertable(
 );
 
 -- Uniqueness for idempotent inserts. Timescale requires partition column in unique constraint.
+-- block_name is included so that if a future profile ever maps the same logical
+-- metric from two different read blocks (today's Acuvim L profile maps each metric
+-- to exactly one block, but this isn't enforceable at the schema level), the two
+-- streams don't dedup against each other. The Pi's local SQLite buffer uses the
+-- same key for symmetry — see edge-agent/modbus-poller.md §4.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reading_unique
-    ON timeseries.reading (time, device_id, logical_metric_key);
+    ON timeseries.reading (time, device_id, logical_metric_key, block_name);
 
 -- Primary access pattern: dashboard "give me the last N hours of metric X for device Y".
 CREATE INDEX IF NOT EXISTS idx_reading_device_metric_time

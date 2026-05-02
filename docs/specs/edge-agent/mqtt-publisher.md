@@ -57,11 +57,18 @@ async def mqtt_loop():
 
                 # Subscribe to commands inside the same `async with` so subscription
                 # is tied to the session.
-                async with client.unfiltered_messages() as messages:
-                    await client.subscribe(f"solamon/{site.slug}/commands/{device.id}", qos=1)
+                # Use messages_for_topic for direct filtered iteration — no
+                # second-pass topic filter in command_loop. asyncio-mqtt
+                # re-subscribes automatically across reconnects when
+                # clean_session=False, so this subscribe is mostly for the
+                # first connection; the re-subscribes on transient drops are
+                # idempotent on the broker side and harmless.
+                topic_filter = f"solamon/{site.slug}/commands/{device.id}"
+                async with client.messages_for_topic(topic_filter) as command_messages:
+                    await client.subscribe(topic_filter, qos=1)
                     await asyncio.gather(
                         publish_loop(client),
-                        command_loop(client, messages),
+                        command_loop(client, command_messages),
                         heartbeat_loop(client),
                     )
         except MqttError as e:
@@ -116,7 +123,7 @@ def build_telemetry_payload(block_name, timestamp, rows):
         "version": "1.0",
         "site_slug": site.slug,
         "device_id": device.id,
-        "timestamp": timestamp.isoformat() + "Z",
+        "timestamp": format_utc(timestamp),               # always UTC, ms precision (see §7.1)
         "block": block_name,
         "source": "modbus_poll" if rows[0].is_recent() else "replay_buffer",
         "quality": worst_quality(rows),                  # "bad" if any row is bad, etc.
@@ -133,25 +140,11 @@ QoS 1 publishes are at-least-once. If the network drops between `client.publish(
 - **Per-message idempotency** is handled cloud-side by the unique constraint on `(time, device_id, logical_metric_key)` in `timeseries.reading`.
 - **Per-buffer idempotency** is handled here: a row is marked `published=true` only after the publish call returns successfully. If the agent crashes after publish but before the SQLite UPDATE, the next startup re-publishes the row — the cloud dedups silently.
 
-## 5. Replay sweeper
+## 5. (No replay sweeper)
 
-A periodic background task that runs every 30 s:
+An earlier draft of this spec specified a 30-second "replay sweeper" task that would un-mark rows the publisher had started fetching but failed to mark `published`. **Removed.** The buffer schema only has `published BOOLEAN` (no `in_flight` state to unmark), and the publish loop's natural fetch-publish-mark cycle re-fetches any unpublished row on every 0.5-second tick anyway. A separate sweeper would have been a no-op in this design.
 
-```python
-async def replay_sweeper():
-    while not shutdown:
-        await asyncio.sleep(30)
-        try:
-            stuck_rows = await buffer.fetch_stuck(older_than=timedelta(seconds=60))
-            if stuck_rows:
-                log.info("replay_sweeper_kicking", row_count=len(stuck_rows))
-                # Just unmark them — the publish loop picks them up next iteration.
-                await buffer.unmark_in_flight([r.id for r in stuck_rows])
-        except Exception as e:
-            log.error("replay_sweeper_failed", error=str(e))
-```
-
-"Stuck" rows are unpublished rows older than 60 s — they shouldn't exist if the publish loop is healthy; if they do, something's wrong (publish call hung mid-flight, weird state from a partial commit). The sweeper is a safety net.
+If a future revision adds an `in_flight_since` column (e.g., to handle very large publish batches that take longer than the publish-loop tick), a sweeper task becomes meaningful — until then the simpler design is correct.
 
 ## 6. Buffer rotation (ring delete)
 
@@ -174,6 +167,8 @@ async def rotation_task():
 
 A safer ring would only delete `published=true` rows older than 7 days, and refuse to delete unpublished rows. **Tradeoff**: with this stricter policy, an extended cloud outage would fill the SD card. We choose the simpler policy for MVP — 7 days is generous; an outage that long requires operator intervention anyway.
 
+> **Operator runbook note:** if the cloud has been offline for more than ~5 days, expect data loss on rotation. Check `buffer_depth_seconds` in the most recent heartbeat (or `journalctl -u docker.service | grep buffer_depth`) before extending the outage. Live to fight another day: bring the cloud up *before* the buffer ages past 7 days; the publisher then drains the entire buffer in seconds.
+
 ## 7. Heartbeat publish
 
 Heartbeat uses the same MQTT client. Implementation lives here for code locality:
@@ -185,12 +180,13 @@ async def heartbeat_loop(client):
             payload = {
                 "version": "1.0",
                 "site_slug": site.slug,
-                "timestamp": now().isoformat() + "Z",
-                "status": "online",
+                "timestamp": now_utc(),                  # see §7.1
+                "status": "online",                       # 'online' | 'offline' (LWT only)
                 "edge_version": __version__,
                 "buffer_depth_seconds": await buffer.compute_buffer_depth_seconds(),
                 "last_modbus_success": metrics.last_modbus_success_iso(),
-                "modbus_errors_per_minute": metrics.modbus_errors_per_minute(),
+                "modbus_errors_per_minute": metrics.modbus_errors_per_minute_total(),
+                "halted_blocks": sorted(metrics.halted_blocks),   # surfaces "energy block disabled" etc.
             }
             await client.publish(
                 f"solamon/{site.slug}/heartbeat",
@@ -204,6 +200,20 @@ async def heartbeat_loop(client):
             log.warn("heartbeat_failed", error=str(e))
         await asyncio.sleep(60)
 ```
+
+### 7.1 Timestamp helper
+
+```python
+def now_utc() -> str:
+    """RFC 3339 UTC timestamp with millisecond precision; required by mqtt-contracts.md."""
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+```
+
+`datetime.now()` (without `tz=timezone.utc`) yields a timezone-naive value in the host's local time; pasting `"Z"` onto it produces a malformed string that asserts UTC while carrying local-time data. **Always use `now_utc()`**.
+
+### 7.2 Heartbeat status enum
+
+`status: "online"` while the agent is alive and connected to MQTT. `"offline"` is the LWT only — published by the broker on unexpected disconnect; the agent itself never publishes it. **There is no `"fault"` status in MVP**: when fingerprint mismatch halts pollers (see [`architecture.md`](architecture.md) §3.1 step 7), the agent stays alive and continues publishing `online` heartbeats; the `halted_blocks: ["realtime", "energy", ...]` field tells the cloud "this Pi is alive but its device isn't producing data". The operator UI renders that as "fingerprint mismatch" or "device fault" without needing a separate enum value.
 
 ## 8. Failure modes
 

@@ -122,7 +122,7 @@ VALUES
   ($1, $2, 'voltage_l1_n',        231.40, NULL, 'good', 'realtime', now()),
   ($1, $2, 'active_power_total',   12.35, NULL, 'good', 'realtime', now())
   -- ...
-ON CONFLICT (time, device_id, logical_metric_key) DO NOTHING;
+ON CONFLICT (time, device_id, logical_metric_key, block_name) DO NOTHING;
 ```
 
 Non-numeric metrics in the same message are excluded from this INSERT; they go to the snapshot upsert below only.
@@ -134,7 +134,7 @@ QoS 1 means we get at-least-once delivery. Duplicates can arrive when:
 - The Pi reconnects and replays a buffered reading that the cloud already received.
 - The cloud's MQTT client reconnects mid-message and the broker re-delivers.
 
-The unique constraint on `(time, device_id, logical_metric_key)` ensures duplicates are silently dropped at insert. No application-level dedup needed.
+The unique constraint on `(time, device_id, logical_metric_key, block_name)` ensures duplicates are silently dropped at insert. No application-level dedup needed. The `block_name` in the key matches the Pi's local SQLite buffer key so dedup semantics are symmetric end-to-end — see [`../edge-agent/modbus-poller.md`](../edge-agent/modbus-poller.md) §4.
 
 ### 4.3 Snapshot upsert
 

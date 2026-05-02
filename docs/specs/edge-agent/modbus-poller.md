@@ -110,6 +110,8 @@ async def poll_one_cycle(profile, block, client, buffer, metrics):
 
 The agent does NOT decode bytes itself. It calls `profile.decode(block_name, raw_bytes)` from the shared profile-loader module ([`../device-library/profile-schema.md`](../device-library/profile-schema.md) §7). The loader knows how to interpret each registered format type (`float32_be`, `dword_high_first`, etc.) and applies per-metric scaling.
 
+> **Hard prerequisite — units correctness.** The poller writes whatever the loader returns directly to SQLite and forwards to MQTT verbatim. **There is no edge-side units-fix path.** If a profile ships without the right `scale` for a metric (e.g., the original Acuvim L bug where `active_power_*` had no `scale: 0.001` despite the manual returning W vs the catalog using kW), every reading is silently wrong by whatever factor the missing scale represents — and within the catalog's `expected_range` the value passes range-check, so the cloud has no way to detect the mistake. The bench Day 3 multimeter cross-check ([`../device-library/acuvim-l-profile.md`](../device-library/acuvim-l-profile.md) §7.2) is the only mechanism that catches this class of bug.
+
 This means:
 
 - Adding a new format type (e.g., `float64_be` for some future device) is a one-line change in the loader, instantly available to all profiles.
@@ -122,15 +124,15 @@ The buffer schema:
 
 ```sql
 CREATE TABLE IF NOT EXISTS reading_buffer (
-    time          TEXT NOT NULL,            -- ISO 8601 with millisecond precision
+    time          TEXT NOT NULL,            -- ISO 8601 UTC with millisecond precision (see §4.1)
     device_id     TEXT NOT NULL,
     logical_metric_key TEXT NOT NULL,
+    block_name    TEXT NOT NULL,
     value         REAL,
     raw_value     INTEGER,
     quality       TEXT NOT NULL DEFAULT 'good',
-    block_name    TEXT NOT NULL,
     published     INTEGER NOT NULL DEFAULT 0,  -- 0 = unpublished, 1 = published
-    PRIMARY KEY (time, device_id, logical_metric_key)
+    PRIMARY KEY (time, device_id, logical_metric_key, block_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_buffer_unpublished
@@ -138,9 +140,24 @@ CREATE INDEX IF NOT EXISTS idx_buffer_unpublished
     WHERE published = 0;
 ```
 
+**`block_name` is part of the primary key** — future-proofs the unlikely case where the same logical metric is mapped from two different blocks in some future profile (today's Acuvim L profile maps each metric to exactly one block; the cloud's `timeseries.reading` carries the same uniqueness key for symmetry — see [`../cloud/data-model.md`](../cloud/data-model.md) §3.11).
+
+### 4.1 Timestamp precision and timezone
+
+Every `time` value is **UTC, RFC 3339, millisecond precision**. The agent uses a single helper:
+
+```python
+def now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+```
+
+`datetime.now()` (timezone-naive, host-local) is **forbidden** — it produces strings like `"2026-05-02T14:34:56.789012"` which, with a trailing `Z` appended, look like UTC but actually carry the Pi's local time. On a Pi set to `Africa/Johannesburg` (UTC+2) every reading would be 2 hours into the future. The startup NTP-sync check ([`architecture.md`](architecture.md) §3.1 step 0) plus this helper together guarantee correct UTC.
+
 WAL mode enabled: `PRAGMA journal_mode=WAL`. Allows concurrent reads while a writer holds the write lock — the publisher reads while pollers write.
 
 Writes use prepared statements with `INSERT OR IGNORE` for the natural primary key — duplicate inserts (e.g., from a power-outage retry) are silent no-ops.
+
+**Sanity log on suppressed inserts:** after each `executemany`, log a WARN if `connection.total_changes` doesn't increment by the expected row count. This catches PK collisions (same millisecond-stamped readings from a clock-jump-backward via NTP step) which would otherwise silently drop data.
 
 ```python
 async def write_batch(self, rows: list[BufferRow]):
@@ -163,12 +180,14 @@ async def write_batch(self, rows: list[BufferRow]):
 
 | Error | Detection | Handling |
 |-------|-----------|----------|
-| Modbus illegal data address (exception 0x02) | `result.isError()`, code 2 | Log WARN, increment error counter, **don't auto-disable the block** — the address might be temporarily illegal during firmware boot. After 10 consecutive failures, log ERROR and stop polling that block until restart. |
+| Modbus illegal data address (exception 0x02) | `result.isError()`, code 2 | Log WARN, increment error counter, **don't auto-disable the block** — the address might be temporarily illegal during firmware boot. After 10 consecutive failures, log ERROR, **add the block name to `metrics.halted_blocks`** (surfaced in heartbeat — see [`mqtt-publisher.md`](mqtt-publisher.md) §7), and stop polling that block until process restart. |
 | Modbus slave device failure (exception 0x04) | code 4 | Same as above. |
-| TCP connection refused / reset | `pymodbus.exceptions.ConnectionException` | Log WARN, increment error counter, sleep cadence, retry next cycle. pymodbus auto-reconnects. |
+| TCP connection refused / reset | `pymodbus.exceptions.ConnectionException` (caught by the **outer** `except` clause; see §2 — `result.isError()` does NOT raise, so the inner branch and outer except are mutually exclusive paths, no double-counting) | Log WARN, increment error counter, sleep cadence, retry next cycle. pymodbus auto-reconnects. |
 | Operation timeout | `asyncio.TimeoutError` from pymodbus's internal timeout | Same as connection error. |
 | Decode error (impossible — profile validated at startup) | `DecodeError` from profile loader | Log ERROR (this is a bug); skip the cycle; carry on. |
 | SQLite write fails (disk full, lock timeout) | `aiosqlite.Error` | Log ERROR, sleep cadence, retry next cycle. The Pi has 30 GB+ free typically; disk full is unlikely. |
+
+**Halted blocks visibility.** When a block is added to `halted_blocks`, the next heartbeat publishes the updated set. The cloud surfaces it in the operator UI's "Edge health" card so the operator sees "energy block halted after 10 consecutive Modbus errors" without needing to SSH into the Pi to read journalctl. There is no MQTT alarms topic in MVP for finer-grained event publishing — adding one is post-MVP work.
 
 ## 6. Ring-buffer rotation
 

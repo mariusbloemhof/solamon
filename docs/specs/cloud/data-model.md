@@ -160,7 +160,7 @@ CREATE INDEX idx_reading_device_metric_time ON timeseries.reading (device_id, lo
 
 This covers the dashboard's "give me the last N hours of `active_power_total` for device X" pattern. The natural ordering is per-(device, metric) descending time.
 
-**No primary key** on the table — Timescale supports unique constraints on hypertables but only when including the partition column (`time`). For idempotency we use the index above as a uniqueness reference and `ON CONFLICT DO NOTHING` handles dedup at insert time. (Actual `(time, device_id, logical_metric_key)` UNIQUE constraint is added in 0001 — see SQL migration.)
+**No primary key** on the table — Timescale supports unique constraints on hypertables but only when including the partition column (`time`). For idempotency we use the index above as a uniqueness reference and `ON CONFLICT DO NOTHING` handles dedup at insert time. (Actual `(time, device_id, logical_metric_key, block_name)` UNIQUE constraint is added in 0001 — see SQL migration. The `block_name` is included for future-proofing; today every logical metric is mapped from exactly one block per profile, so it's effectively redundant — but it makes a future profile's two-block-same-metric scenario unambiguous.)
 
 **FK considerations:** `device_id` and `logical_metric_key` are real FKs. They impose a per-insert validation cost. At MVP throughput (one device, ~3 readings/sec average) this is negligible. If we hit throughput problems later we drop the FK and validate at the ingestion worker — but not before measuring.
 

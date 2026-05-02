@@ -29,7 +29,9 @@ bearer_token: "<per-site secret, same value as the MQTT password>"
 log_level: INFO    # optional; default INFO
 ```
 
-Generated at install time by `solamon-edge-install.sh` (specified in [`../infrastructure/pi-install.md`](../infrastructure/pi-install.md)). The installer passes `site_slug` + `cloud_url` + `bearer_token` as arguments; the script writes the YAML.
+Generated at install time by `solamon-edge-install.sh` (specified in the infrastructure spec group — [SOL-21](https://linear.app/solamon/issue/SOL-21), TBD). The installer passes `site_slug` + `cloud_url` + `bearer_token` as arguments; the script writes the YAML.
+
+**Expected runtime user:** the agent runs as the `solamon` system user (created by the installer). The bootstrap file is owned by `solamon:solamon` mode `600` so a non-root operator can `sudo cat` it but the agent itself doesn't need root to read it.
 
 **Validation on startup:**
 
@@ -47,7 +49,8 @@ The `bearer_token` is the same secret the agent uses as the MQTT password. We de
 async def fetch_site_config(bootstrap: Bootstrap) -> SiteConfig:
     url = f"{bootstrap.cloud_url}/api/v1/edge/config/{bootstrap.site_slug}"
     headers = {"Authorization": f"Bearer {bootstrap.bearer_token}"}
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # 60 s timeout — generous on bench LAN; survives marginal LTE during a field deploy
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         return parse_site_config(response.json())
@@ -114,6 +117,18 @@ async def config_refresh_task():
 
 For MVP, **the in-memory profile is not swapped on refresh**. Only the cache file is updated. Operator must `systemctl restart solamon-edge` (or `docker compose restart edge-agent`) to pick up changes. Hot reload is [SOL-17](https://linear.app/solamon/issue/SOL-17).
 
+### 4.1 Operator-restart cases
+
+The following config / state changes require a manual `docker compose restart edge-agent` (until SOL-17 lands hot reload):
+
+- **Device profile change** — e.g., a register address corrected in the YAML, or a per-site override added.
+- **`device.id` change** — the cloud reseeded the device row (e.g., during a profile correction). The Pi's MQTT subscription is hardcoded to `solamon/{slug}/commands/{device.id}`; the new device.id won't take effect until restart, and any commands issued in the meantime are silently dropped.
+- **Logical metric catalog change** — added/removed metrics, range edits.
+- **Modbus host / port / unit_id change** — site config carries these but the Modbus client is opened once at startup.
+- **Device hardware replacement** — re-fingerprint only runs at startup; new hardware needs a fresh fingerprint check.
+
+Each of these is operator-driven and rare. The deploy procedure for any of them is "edit YAML in repo → re-seed cloud → SSH to Pi → restart container". Document this in the operator runbook (TBD; lives in infrastructure spec).
+
 ## 5. Fallback behaviour
 
 | Scenario | Behaviour |
@@ -134,7 +149,8 @@ The principle: **a Pi that's already running stays running**. Cloud transient fa
 - Site config cache permissions: same.
 - The bearer token / MQTT password is logged ONLY when masked: `Bearer ****1234` (last 4 chars). Never the full token.
 - The Pi's environment variables don't carry the secret — it's only in the YAML file. This is so a `docker inspect` doesn't expose it.
-- When the cloud rotates the per-site secret (post-MVP feature), the old secret is valid for a 24-hour grace period to allow Pi restart.
+- The bearer-token-and-MQTT-password are deliberately the same value in MVP (see [`../cloud/api-surface.md`](../cloud/api-surface.md) §3.4). A future split (post-mTLS migration, [SOL-10](https://linear.app/solamon/issue/SOL-10)) would require revisiting log redaction to mask both independently.
+- When the cloud rotates the per-site secret (post-MVP feature), **the agent must overwrite `/etc/solamon/bootstrap.yaml.bearer_token` from the response's `mqtt.password` field** after every successful refresh. Otherwise the bootstrap file's bearer goes stale beyond the 24-hour grace period and the agent permanently loses ability to refresh config.
 
 ## 7. Acceptance criteria
 

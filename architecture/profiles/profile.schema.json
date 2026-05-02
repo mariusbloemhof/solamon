@@ -255,6 +255,12 @@
           "properties": {
             "address": { "type": "integer", "minimum": 0, "maximum": 65535 },
             "offset": { "type": "integer", "minimum": 0, "default": 0 },
+            "fc": {
+              "type": "integer",
+              "enum": [3, 4],
+              "default": 3,
+              "description": "Modbus function code for read-back: 3=read holding registers (default), 4=read input registers. Only matters for devices that put a writable register in input-register space."
+            },
             "format": { "$ref": "#/$defs/FormatType" },
             "length": {
               "type": "integer",

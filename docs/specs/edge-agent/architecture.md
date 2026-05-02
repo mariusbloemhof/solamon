@@ -63,8 +63,7 @@ If the Python process crashes, Docker restarts it (with the configured `restart-
 | **Modbus poller** (N per N read blocks) | Per-block `cadence_s` from profile | Read FC03 batched block, decode, write to SQLite | [`modbus-poller.md`](modbus-poller.md) |
 | **MQTT publisher** | Continuous (~0.5 s drain interval) | Pull unpublished rows from SQLite, build per-block telemetry messages, publish QoS 1 | [`mqtt-publisher.md`](mqtt-publisher.md) |
 | **MQTT command subscriber** | On-message | Receive command, validate, FC06 write + read-back, publish ack | [`command-subscriber.md`](command-subscriber.md) |
-| **Heartbeat** | 60 s | Publish status to `solamon/{slug}/heartbeat` | This file §4 |
-| **Replay sweeper** | 30 s | Find rows still `published=false` past a stall threshold; force re-publish | [`mqtt-publisher.md`](mqtt-publisher.md) §5 |
+| **Heartbeat** | 60 s | Publish status to `solamon/{slug}/heartbeat`. Implementation is **inside** the MQTT loop (see [`mqtt-publisher.md`](mqtt-publisher.md) §7) — runs alongside the publisher and command subscriber under the same `async with mqtt:` block, so when the broker disconnects, heartbeat is naturally suspended and LWT covers the offline transition. | [`mqtt-publisher.md`](mqtt-publisher.md) §7 |
 | **Config refresh** | 5 min | GET `/edge/config/{slug}` from cloud; if changed, log + (post-MVP) signal hot-reload | [`config-loader.md`](config-loader.md) §4 |
 
 ### 2.2 Shared state
@@ -74,17 +73,27 @@ If the Python process crashes, Docker restarts it (with the configured `restart-
 - **Modbus client** — single `AsyncModbusTcpClient` instance; shared by pollers and command subscriber. pymodbus serializes operations on a TCP connection internally; no extra locking needed.
 - **MQTT client** — single `asyncio-mqtt` Client; shared by publisher, subscriber, heartbeat.
 - **SQLite connection pool** — small pool (4 connections) using `aiosqlite`; each task gets its own connection from the pool.
-- **Health metrics** — atomic counters and gauges:
-  - `modbus_errors` (rolling 60-second window)
-  - `modbus_successes` (rolling 60-second window)
-  - `last_modbus_success_at` (timestamp)
+- **Health metrics** — atomic counters and gauges, kept both **per-block** (for diagnostics) and **globally aggregated**:
+  - `modbus_errors[block_name]` (rolling 60-second window per block)
+  - `modbus_errors_total` (rolling 60-second window summed across all blocks)
+  - `modbus_successes[block_name]` (per-block) + `modbus_successes_total` (global)
+  - `last_modbus_success_at` (timestamp; global)
   - `buffer_depth_seconds` (computed: `now() - oldest_unpublished_time`)
+  - `halted_blocks: set[str]` — block names that have been disabled until restart per [`modbus-poller.md`](modbus-poller.md) §5
+- The logical metric `edge_modbus_errors_per_minute` published as telemetry uses the **global** counter; per-block counters are exposed in heartbeat for diagnostics.
 
 ## 3. Lifecycle
 
 ### 3.1 Startup sequence
 
 ```
+0. Verify the system clock is NTP-synced
+   └─ Run `timedatectl show -p NTPSynchronized --value`
+   └─ If "no" → log CRITICAL `clock_unsynchronised`, sleep 30s, retry
+   └─ After 5 retries (2.5 min) → exit 1
+   └─ Why: telemetry timestamps must be UTC-correct or hypertable
+       ordering breaks and the cloud's snapshot_time semantics fail.
+
 1. Read /etc/solamon/bootstrap.yaml
    └─ { site_slug, cloud_url, bearer_token }
    └─ If missing or invalid → exit 1 (operator misconfiguration)
@@ -114,8 +123,23 @@ If the Python process crashes, Docker restarts it (with the configured `restart-
    └─ pymodbus AsyncModbusTcpClient(host, port)
    └─ On connect: run profile.fingerprint
        ├─ On match → log identifiers, store in app state, continue
-       └─ On mismatch → publish alarm event to cloud, log critical, halt poller tasks
-                         (heartbeat continues; cloud sees site as 'fault')
+       └─ On mismatch → log CRITICAL with details (which fingerprint reads failed),
+                         halt poller tasks (no Modbus traffic).
+                         Heartbeat continues with status="online" — the AGENT is
+                         alive; only the device is wrong. The heartbeat's
+                         `halted_blocks` field will contain all block names so
+                         the operator UI can render the device as "fingerprint
+                         mismatch" when it sees telemetry stop arriving despite
+                         a healthy heartbeat. There is no `solamon/{slug}/alarms/...`
+                         topic in MVP for this — operator notices via dashboard
+                         + journalctl. Adding a real alarms topic is post-MVP.
+
+   └─ Hot-swap caveat: re-fingerprint runs once at startup. Replacing the
+       physical device with a different unit while the agent is running is
+       NOT auto-detected — the agent will keep decoding 0x0600 against
+       whatever's on the wire, producing nonsense telemetry. Device replacement
+       requires `docker restart solamon-edge`. Re-fingerprint-on-Modbus-reconnect
+       is post-MVP.
 
 8. Subscribe to commands topic: solamon/{slug}/commands/{device_id}
 
@@ -150,35 +174,18 @@ On `SIGKILL` (forced): no cleanup. SQLite WAL ensures transactions are atomic; o
 
 ## 4. Heartbeat
 
-A dedicated task publishes a heartbeat message every 60 s on the `solamon/{slug}/heartbeat` topic. Payload per [`../cloud/mqtt-contracts.md`](../cloud/mqtt-contracts.md) §5.
+The heartbeat is **not a standalone task** — it runs inside the MQTT loop alongside the publisher and command subscriber, sharing the same MQTT client. Concrete implementation in [`mqtt-publisher.md`](mqtt-publisher.md) §7. Payload per [`../cloud/mqtt-contracts.md`](../cloud/mqtt-contracts.md) §5.
 
-```python
-# Pseudo-code
-async def heartbeat_task():
-    while not shutdown:
-        try:
-            payload = {
-                "version": "1.0",
-                "site_slug": site.slug,
-                "timestamp": now_iso(),
-                "status": "online",
-                "edge_version": __version__,
-                "buffer_depth_seconds": await db.compute_buffer_depth(),
-                "last_modbus_success": metrics.last_modbus_success_at_iso(),
-                "modbus_errors_per_minute": metrics.modbus_errors_per_minute(),
-            }
-            await mqtt.publish(
-                f"solamon/{site.slug}/heartbeat",
-                json.dumps(payload),
-                qos=1,
-                retain=True,
-            )
-        except Exception as e:
-            log.warn("heartbeat publish failed", error=e)
-        await asyncio.sleep(60)
-```
+The heartbeat enriches the basic `online`/`offline` status with diagnostic fields the cloud surfaces in the operator UI's edge-health card:
 
-The retain flag ensures new dashboard subscribers see the latest heartbeat immediately. The LWT (registered at MQTT connect) handles the unexpected-disconnect case.
+- `buffer_depth_seconds` — computed from SQLite (`now() - oldest_unpublished_time`)
+- `last_modbus_success` — timestamp of the most recent successful read across all blocks
+- `modbus_errors_per_minute` — global counter (sum across blocks)
+- `halted_blocks: []` — names of blocks halted by the consecutive-failure rule (see [`modbus-poller.md`](modbus-poller.md) §5)
+
+The retain flag (set at publish time) ensures new dashboard subscribers see the latest heartbeat immediately. The LWT (registered at MQTT connect with `will_retain: true`) replaces the retained "online" message with an "offline" message on unexpected disconnect.
+
+**Timestamp semantics:** all heartbeat timestamps are UTC, RFC 3339 with millisecond precision. The Pi uses a `now_utc()` helper that returns `datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")`. Naked `datetime.now()` (which yields a timezone-naive value in the host's local time) must NOT be used — see [`config-loader.md`](config-loader.md) §0 (NTP prerequisite) and the lib-level `now_utc()` helper.
 
 ## 5. Logging
 
@@ -202,7 +209,17 @@ Docker captures stdout → host journald. Tailscale-SSH'd operators tail `journa
 
 ## 6. Crash-loop protection
 
-Restart frequency rate-limited at the systemd level (`StartLimitBurst=5, StartLimitIntervalSec=60`). If the agent dies more than 5 times in 60 s, systemd holds it in `failed` state for 5 min before retry. This prevents tight crash loops from draining the SD card via log churn.
+Restart frequency is rate-limited via **Docker compose's restart policy**, not systemd:
+
+```yaml
+edge-agent:
+  restart: on-failure:5
+  # Combined with a custom retry-delay wrapper or healthcheck-based restart,
+  # this caps restarts at 5 per Docker daemon lifetime; subsequent failures
+  # leave the container stopped until manual intervention.
+```
+
+systemd protects `dockerd` itself (the Docker daemon survives), but it does NOT manage individual containers — `restart: always` inside compose is what governs the agent. If we needed strict crash-loop limits at the systemd level, we'd move the agent out of compose into a systemd-managed unit; for MVP, Docker's policy is sufficient.
 
 If the agent enters this state, the cloud sees:
 
