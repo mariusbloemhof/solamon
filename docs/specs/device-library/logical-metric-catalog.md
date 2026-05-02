@@ -72,16 +72,17 @@ Conventions for AC active and reactive power:
 |-----|-------|------|------|-------|
 | `voltage_l1_n` / `_l2_n` / `_l3_n` | Phase {A/B/C} voltage (L-N) | V | float | Healthy SA range 207–253 V (230 V ±10 %). |
 | `voltage_l1_l2` / `_l2_l3` / `_l3_l1` | Line voltage {L1-L2 / L2-L3 / L3-L1} | V | float | Line-to-line. Healthy SA range 360–440 V (400 V ±10 %). |
-| `voltage_avg_phase` | Average phase voltage | V | float | Convenience metric. |
-| `voltage_avg_line` | Average line voltage | V | float | Convenience metric. |
+
+> **Deferred (post-MVP):** `voltage_avg_phase`, `voltage_avg_line`. Some devices (e.g., Acuvim II) expose averages directly; on Acuvim L they're absent. Will become **derived metrics** computed cloud-side from per-phase readings — see [SOL-23](https://linear.app/solamon/issue/SOL-23) for the derived-metrics design.
 
 ### 3.4 Current
 
 | Key | Label | Unit | Type | Notes |
 |-----|-------|------|------|-------|
 | `current_l1` / `_l2` / `_l3` | Phase {A/B/C} current | A | float | |
-| `current_avg` | Average phase current | A | float | |
 | `current_neutral` | Neutral current | A | float | Healthy: small (a few A). Large neutral current = imbalance or fault. |
+
+> **Deferred (post-MVP):** `current_avg` — same reasoning as `voltage_avg_*`. Will become a derived metric. [SOL-23](https://linear.app/solamon/issue/SOL-23).
 
 ### 3.5 Power factor
 
@@ -115,7 +116,8 @@ Conventions for AC active and reactive power:
 | `current_unbalance_pct` | Current unbalance | % | float | Context-dependent; depends on whether load is balanced by design. |
 | `thd_voltage_l1` / `_l2` / `_l3` | THD voltage phase {A/B/C} | % | float | Healthy: <5 %. |
 | `thd_current_l1` / `_l2` / `_l3` | THD current phase {A/B/C} | % | float | Context-dependent on load type. |
-| `load_type` | Load type | (none) | enum | `inductive` / `capacitive` / `resistive` (76 / 67 / 82 in Acuvim raw). |
+
+> **Deferred (post-MVP):** `load_type`. Lives in Acuvim L secondary block (`0x014A`) which the MVP profile doesn't poll. Add when we extend the profile to include the secondary block — additive change, no schema bump.
 
 ### 3.9 Configuration (read-only at runtime; captured on startup + hourly)
 
@@ -153,7 +155,7 @@ Conventions for AC active and reactive power:
 
 ## 5. Versioning
 
-- The catalog gets a top-level `version: "1.0"` field. MVP ships at 1.0.
+- The catalog gets a top-level `schema_version: "1.0"` field. MVP ships at 1.0. The field name is intentionally identical to the one in device profiles for consistency.
 - **Additive changes** (new metrics) → bump minor version (`1.1`). Edge agents on older versions ignore unknown keys.
 - **Breaking changes** (renamed key, changed unit, changed sign convention) → bump major version (`2.0`). Migration documented; deployed agents must upgrade together with cloud.
 - Catalog version is included in the consolidated config returned by `GET /api/v1/edge/config/{site_slug}` so the agent can refuse incompatible versions.
@@ -163,7 +165,7 @@ Schema-version handling for full deployments is the post-MVP [SOL-15](https://li
 ## 6. Acceptance criteria for this catalog
 
 - `architecture/logical_metrics.yaml` exists, parses as YAML, top-level shape matches the schema described above.
-- All ~40 metrics above are present with required fields populated.
+- All ~55 metrics above are present with required fields populated.
 - Every metric used in the Acuvim L profile is present in the catalog (cross-checked at profile load).
 - Every metric used in the dashboard card layout (main spec §9 + register-scope doc §J) is present.
 - Loaded by the edge agent at startup; loaded by cloud ingestion at startup; both raise a clear error if the file is missing or invalid.

@@ -131,13 +131,14 @@ Heartbeat task (60 s) publishes to `solamon/{site}/heartbeat` with `{ timestamp,
 
 | Block | Address | Cadence | Notes |
 |-------|---------|---------|-------|
-| Real-time block | `0x0600`–`0x0649` (Float32 BE, 74 regs) | **10 s** | One batched FC03; covers V/I/P/Q/S/PF/F per phase + total |
-| Demand sub-block | within `0x063E`–`0x0649` | stored at **30 s** (read at 10s, downsampled) | Active/reactive/apparent demand + per-phase current demand |
+| Real-time block | `0x0600`–`0x0649` (Float32 BE, 74 regs) | **10 s** | One batched FC03; covers V/I/P/Q/S/PF/F per phase + total. Demand metrics live in this block too (offsets 124-144) and are stored at the same 10 s cadence (per-metric storage cadences are out of MVP scope — see [`device-library/profile-schema.md`](device-library/profile-schema.md) §10). |
 | Energy counters | `0x0156`–`0x015F` (Dword × 0.1) | **60 s** | Import/export/reactive/apparent energy |
 | THD totals | `0x0400`–`0x0405` | **60 s** | THD V1/V2/V3, THD I1/I2/I3 |
-| Peak demand stats | `0x1024`–`0x1027`, `0x1038`–`0x103B` | **300 s** | Max demand + timestamp |
+| Peak demand | `0x1024`–`0x1027` | **300 s** | Max active power demand value (timestamp decoding deferred) |
 | Clock | `0x0184`–`0x018A` | **3600 s** | Drift detection vs Pi NTP |
-| Wiring config | `0x0103`–`0x010C` | startup + hourly | PT/CT ratios, wiring type, demand window |
+| Wiring config | `0x0103`–`0x0109` + `0x010C` | startup + hourly | PT/CT ratios, wiring type, demand window |
+
+**Power-metric scaling:** the Acuvim L manual declares the primary Float32 power fields in W/var/VA; our catalog uses kW/kvar/kVA. The profile applies `scale: 0.001` to all 17 power metrics. To be verified against a multimeter on bench Day 3 — see [`device-library/acuvim-l-profile.md`](device-library/acuvim-l-profile.md) §7.2.
 
 Empirical confirmation of `0x0600` vs `0x4000` happens on Day 3 of bench rehearsal via `solamon-probe`; the cadence/scope above assumes the documented `0x0600` block is canonical.
 
@@ -262,8 +263,8 @@ MVP subset of [`architecture/data-model/DATA_MODEL.md`](../../architecture/data-
 | `app` | `Organisation` | 1 | Johan's company |
 | `app` | `Site` | 1-2 | Bench, then prospect site; `slug` drives MQTT topic prefix |
 | `app` | `DeviceType` | 1 | `acuvim_l` (with `acuvim_l.yaml` profile attached); `acuvim_ii` future |
-| `app` | `Device` | 1 per site | host, port, unit_id, device_type_id |
-| `app` | `LogicalMetric` | ~30 | Seeded from `architecture/logical_metrics.yaml` |
+| `app` | `Device` | 1 per site | `host`, `port`, `unit_id`, `device_type_id`, `serial_number`, `firmware_version`, `sub_variant` (e.g. `CL`/`DL`/`EL`/`KL` for Acuvim L — captured from device label at commissioning since not exposed via Modbus) |
+| `app` | `LogicalMetric` | ~55 | Seeded from `architecture/logical_metrics.yaml` |
 | `app` | `DeviceProfile` | 1 | Seeded from `architecture/profiles/acuvim_l.yaml`; stored as JSON column on `DeviceType` |
 | `app` | `User` | 1 | Shared admin |
 | `app` | `SiteAccess` | 1 | admin → bench |

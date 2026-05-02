@@ -21,7 +21,7 @@ device:
   category: meter            # meter | pv_inverter | bess_pcs | bess_hub | generator | ppc | gateway
 
 connection:
-  protocol: modbus_tcp       # modbus_tcp | modbus_rtu | mqtt | http_push
+  protocol: modbus_tcp       # modbus_tcp | modbus_rtu  (MVP — see scope note below)
   default_port: 502
   default_unit_id: 1
 
@@ -35,6 +35,8 @@ control: {...}               # see §5 — writable registers
 ```
 
 Every profile MUST have `schema_version`, `device`, `connection`, `fingerprint`, and `read_blocks`. `control` is optional (for read-only devices) but expected on meters and PCSs.
+
+> **MVP scope: Modbus profiles only.** The schema currently constrains `connection.protocol` to `modbus_tcp` or `modbus_rtu`. AXM-WEB2 MQTT-push profiles (the planned billing path for Acuvim) and HTTP-push profiles need a different shape — `read_blocks`/`fingerprint.reads` are FC03-shaped and don't apply. Adding push protocols is tracked in [SOL-22](https://linear.app/solamon/issue/SOL-22) as a discriminated schema extension; until then, this schema is the authoritative contract for what we ship.
 
 ## 2. `device` and `connection` blocks
 
@@ -162,6 +164,8 @@ Each writable register is keyed by its logical metric name (which MUST exist in 
 
 ## 6. Supported format types
 
+### 6.1 Generic formats (decoded by the loader directly)
+
 | Format | Bytes | Modbus regs | Description |
 |--------|-------|-------------|-------------|
 | `float32_be` | 4 | 2 | IEEE 754 single-precision, big-endian (ABCD byte order). Most common for modern AccuEnergy. |
@@ -173,9 +177,31 @@ Each writable register is keyed by its logical metric name (which MUST exist in 
 | `int32_be` | 4 | 2 | Signed 32-bit integer, big-endian word order. |
 | `dword_high_first` | 4 | 2 | AccuEnergy energy convention: 32-bit unsigned with high word at the lower register address. |
 | `word` | 2 | 1 | Alias for `uint16`. |
-| `ascii` | varies | varies | ASCII string. `length` field on the metric specifies how many bytes. Trailing nulls / spaces stripped. |
+| `ascii` | varies | varies | ASCII string. `length` field on the metric specifies how many **registers** (each 2 bytes). Trailing nulls / spaces stripped. |
 
 `bool` and `bitfield` are deferred — no MVP metric needs them. Adding later requires a minor version bump.
+
+### 6.2 Custom decoders (`format: custom` + `decoder: <name>`)
+
+Vendor-specific decode logic that doesn't generalise (e.g., the Acuvim clock packed as 7 sequential `uint16`s representing Y/M/D/H/M/S/DoW; future Sinexcel power-flag bitmaps; EPC SunSpec model 65534 oddities). Pattern:
+
+```yaml
+- { logical: meter_clock, offset: 0, format: custom, decoder: acuvim_clock }
+```
+
+The profile loader maintains a registry: `decoders["acuvim_clock"] = AcuvimClockDecoder()`. A profile referencing an unregistered decoder fails at load time with a clear "decoder not found" error.
+
+Adding a new vendor decoder = one Python class implementing `decode(buffer: bytes, offset: int) -> Reading` + one line in the registry. The schema enum doesn't grow; only `decoder` strings do.
+
+### 6.3 Offset alignment
+
+Format-appropriate alignment is **enforced by the loader at profile load time**, not by the JSON Schema (cross-field constraints don't fit JSON Schema's model cleanly):
+
+- `float32_*` / `uint32_be` / `int32_be` / `dword_high_first` — offset multiple of 4
+- `uint16` / `int16` / `word` — offset multiple of 2
+- `ascii` — any byte-aligned offset; loader checks `length × 2` doesn't exceed the block
+
+Misalignment fails with a clear error naming the offending metric.
 
 ## 7. Profile loader semantics
 
@@ -247,7 +273,7 @@ The profile schema is formalised in `architecture/profiles/profile.schema.json`.
 
 ## 10. Out of scope (deferred)
 
-- Sub-block sub-cadences (a metric inside a block sampled less frequently than the block itself). MVP stores at the block cadence; downsampling happens in cloud queries.
+- Sub-block sub-cadences (a metric inside a block sampled less frequently than the block itself). MVP stores at the block cadence (one row per metric per poll). Downsampling — per-metric storage cadence, continuous aggregates, per-metric retention — happens in cloud queries / Timescale features, not the profile.
 - Per-site profile overrides → [SOL-13](https://linear.app/solamon/issue/SOL-13).
 - Auto-detection (running fingerprint against ALL profiles on connect, picking the match) → [SOL-11](https://linear.app/solamon/issue/SOL-11). For MVP, the active profile is configured per site.
 - Hot reload → [SOL-17](https://linear.app/solamon/issue/SOL-17).

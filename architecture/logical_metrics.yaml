@@ -67,21 +67,9 @@ metrics:
     is_cumulative: false
     expected_range: [0, 2000]
 
-  voltage_avg_phase:
-    label: Average phase voltage
-    unit: V
-    data_type: float
-    category: voltage
-    is_cumulative: false
-    expected_range: [0, 1000]
-
-  voltage_avg_line:
-    label: Average line voltage
-    unit: V
-    data_type: float
-    category: voltage
-    is_cumulative: false
-    expected_range: [0, 2000]
+  # NOTE: voltage_avg_phase and voltage_avg_line are deferred — not exposed by
+  # Acuvim L primary block; Acuvim II has them. Will become "derived" metrics
+  # (computed cloud-side from per-phase values) when needed. See SOL-23.
 
   # ─── Current ───────────────────────────────────────────────────────────────
   current_l1:
@@ -108,13 +96,7 @@ metrics:
     is_cumulative: false
     expected_range: [0, 50000]
 
-  current_avg:
-    label: Average phase current
-    unit: A
-    data_type: float
-    category: current
-    is_cumulative: false
-    expected_range: [0, 50000]
+  # NOTE: current_avg deferred — same reasoning as voltage_avg_*. SOL-23.
 
   current_neutral:
     label: Neutral current
@@ -443,16 +425,9 @@ metrics:
     is_cumulative: false
     expected_range: [0, 100]
 
-  load_type:
-    label: Load type
-    unit: ""
-    data_type: enum
-    category: quality
-    is_cumulative: false
-    enum_values:
-      76: inductive
-      67: capacitive
-      82: resistive
+  # NOTE: load_type deferred — lives in Acuvim L secondary block (0x014A) which
+  # we do not poll in MVP. Add when we extend the profile to include the
+  # secondary block. Schema-version bump not required (additive).
 
   # ─── Configuration (read on startup, hourly thereafter) ────────────────────
   voltage_wiring_type:

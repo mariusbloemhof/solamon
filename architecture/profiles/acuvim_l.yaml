@@ -4,9 +4,13 @@
 # Source: discovery/specs/acuvim_l_modbus_registers.md (Acuvim-L user manual V2.0.3, December 2025)
 # Linear: SOL-20
 #
-# Open empirical question (resolved on bench Day 3 via solamon-probe):
-#   Johan reports the 0x4000 block (Acuvim II address space) reads on his Acuvim L meters.
-#   AccuEnergy docs disagree. This profile commits to the documented 0x0600 block.
+# Open empirical questions resolved on bench Day 3 via solamon-probe:
+#   1. 0x0600 vs 0x4000 — Johan reports the 0x4000 block (Acuvim II addresses)
+#      reads on his Acuvim L. This profile commits to the documented 0x0600 block.
+#   2. Power-metric units — Acuvim L manual says primary Float32 returns W/var/VA;
+#      Acuvim II manual for the same fields says kW/kvar/kVA. Our catalog uses
+#      kW; we apply scale 0.001 here. Sanity-check on the bench against a
+#      multimeter on phase A.
 #   See acuvim-l-profile.md §7 for the bench test plan.
 
 schema_version: "1.0"
@@ -23,9 +27,15 @@ connection:
 
 # ─── Fingerprint — negative SunSpec + positive capability probes ─────────────
 # Acuvim L exposes NO identity registers on the wire. We use:
-#   1. Negative read of the SunSpec block at 0xC350 (which exists on Acuvim II but not L)
+#   1. Negative read of the SunSpec block at 0xC350 (which exists on Acuvim II
+#      WITH AXM-WEB/WEB2 module but not on Acuvim L)
 #   2. Positive read of the secondary frequency register
 #   3. Positive read of the comms address echo
+#
+# Known false-positive risk: an Acuvim II *without* AXM-WEB also returns
+# exception 0x02 at 0xC350. The probe-CLI's --cross-check mode disambiguates
+# by also reading the Acuvim II 0x4000 block — if THAT returns sensible
+# values, this is an Acuvim II without WEB. See acuvim-l-profile.md §4.
 fingerprint:
   reads:
     - address: 0xC350
@@ -44,7 +54,10 @@ fingerprint:
 # ─── Read blocks ─────────────────────────────────────────────────────────────
 read_blocks:
 
-  # 5.1 — Realtime measurements (74 regs, Float32 BE, no scaling) — every 10 s
+  # 5.1 — Realtime measurements (74 regs, Float32 BE) — every 10 s
+  # Voltage / Current / Frequency / PF / unbalance: no scaling needed (Float32 is in V/A/Hz).
+  # Active / reactive / apparent power: Acuvim L manual returns these in W / var / VA;
+  # our catalog uses kW / kvar / kVA → scale: 0.001.
   - name: realtime
     fc: 3
     address: 0x0600
@@ -62,27 +75,27 @@ read_blocks:
       - { logical: current_l2,           offset: 32,  format: float32_be }
       - { logical: current_l3,           offset: 36,  format: float32_be }
       - { logical: current_neutral,      offset: 40,  format: float32_be }
-      - { logical: active_power_l1,      offset: 44,  format: float32_be }
-      - { logical: active_power_l2,      offset: 48,  format: float32_be }
-      - { logical: active_power_l3,      offset: 52,  format: float32_be }
-      - { logical: active_power_total,   offset: 56,  format: float32_be }
-      - { logical: reactive_power_l1,    offset: 60,  format: float32_be }
-      - { logical: reactive_power_l2,    offset: 64,  format: float32_be }
-      - { logical: reactive_power_l3,    offset: 68,  format: float32_be }
-      - { logical: reactive_power_total, offset: 72,  format: float32_be }
-      - { logical: apparent_power_total, offset: 76,  format: float32_be }
+      - { logical: active_power_l1,      offset: 44,  format: float32_be, scale: 0.001 }
+      - { logical: active_power_l2,      offset: 48,  format: float32_be, scale: 0.001 }
+      - { logical: active_power_l3,      offset: 52,  format: float32_be, scale: 0.001 }
+      - { logical: active_power_total,   offset: 56,  format: float32_be, scale: 0.001 }
+      - { logical: reactive_power_l1,    offset: 60,  format: float32_be, scale: 0.001 }
+      - { logical: reactive_power_l2,    offset: 64,  format: float32_be, scale: 0.001 }
+      - { logical: reactive_power_l3,    offset: 68,  format: float32_be, scale: 0.001 }
+      - { logical: reactive_power_total, offset: 72,  format: float32_be, scale: 0.001 }
+      - { logical: apparent_power_total, offset: 76,  format: float32_be, scale: 0.001 }
       - { logical: power_factor_l1,      offset: 80,  format: float32_be }
       - { logical: power_factor_l2,      offset: 84,  format: float32_be }
       - { logical: power_factor_l3,      offset: 88,  format: float32_be }
       - { logical: power_factor_total,   offset: 92,  format: float32_be }
       - { logical: voltage_unbalance_pct,offset: 96,  format: float32_be }
       - { logical: current_unbalance_pct,offset: 100, format: float32_be }
-      - { logical: apparent_power_l1,    offset: 108, format: float32_be }
-      - { logical: apparent_power_l2,    offset: 112, format: float32_be }
-      - { logical: apparent_power_l3,    offset: 116, format: float32_be }
-      - { logical: apparent_power_demand,offset: 124, format: float32_be }
-      - { logical: active_power_demand,  offset: 128, format: float32_be }
-      - { logical: reactive_power_demand,offset: 132, format: float32_be }
+      - { logical: apparent_power_l1,    offset: 108, format: float32_be, scale: 0.001 }
+      - { logical: apparent_power_l2,    offset: 112, format: float32_be, scale: 0.001 }
+      - { logical: apparent_power_l3,    offset: 116, format: float32_be, scale: 0.001 }
+      - { logical: apparent_power_demand,offset: 124, format: float32_be, scale: 0.001 }
+      - { logical: active_power_demand,  offset: 128, format: float32_be, scale: 0.001 }
+      - { logical: reactive_power_demand,offset: 132, format: float32_be, scale: 0.001 }
       - { logical: current_demand_l1,    offset: 136, format: float32_be }
       - { logical: current_demand_l2,    offset: 140, format: float32_be }
       - { logical: current_demand_l3,    offset: 144, format: float32_be }
@@ -115,22 +128,27 @@ read_blocks:
       - { logical: thd_current_l3, offset: 10, format: uint16, scale: 0.01 }
 
   # 5.4 — Peak demand (Dword + timestamp; MVP reads value only) — every 300 s
+  # NOTE: dword_high_first is unsigned. Acuvim normally reports |max|, so a
+  # site with significant export still sees a non-negative value. If a future
+  # firmware ever returns signed peak demand, switch to int32_be.
+  # Manual unit: W → catalog uses kW → scale 0.001.
   - name: peak_demand
     fc: 3
     address: 0x1024
     length: 4
     cadence_s: 300
     metrics:
-      - { logical: active_power_demand_max, offset: 0, format: dword_high_first, scale: 1.0 }
+      - { logical: active_power_demand_max, offset: 0, format: dword_high_first, scale: 0.001 }
 
   # 5.5 — Meter clock (custom decoder; 7 uint16s → datetime) — every 3600 s
+  # acuvim_clock is a custom decoder registered with the profile loader.
   - name: clock
     fc: 3
     address: 0x0184
     length: 7
     cadence_s: 3600
     metrics:
-      - { logical: meter_clock, offset: 0, format: acuvim_clock }
+      - { logical: meter_clock, offset: 0, format: custom, decoder: acuvim_clock }
 
   # 5.6 — Configuration (mixed; read at startup + hourly) — every 3600 s
   - name: config

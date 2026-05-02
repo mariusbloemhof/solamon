@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://solamon.example/schemas/device-profile-1.0.json",
   "title": "Solamon Device Profile",
-  "description": "Schema every device profile YAML file conforms to. Spec: docs/specs/device-library/profile-schema.md",
+  "description": "Schema every device profile YAML file conforms to. Spec: docs/specs/device-library/profile-schema.md. MVP scope is Modbus profiles (TCP and RTU). MQTT-push and HTTP-push profiles are out of MVP scope and will require a discriminated extension to this schema (see SOL-22).",
   "type": "object",
   "required": ["schema_version", "device", "connection", "fingerprint", "read_blocks"],
   "additionalProperties": false,
@@ -32,7 +32,8 @@
       "properties": {
         "protocol": {
           "type": "string",
-          "enum": ["modbus_tcp", "modbus_rtu", "mqtt", "http_push"]
+          "enum": ["modbus_tcp", "modbus_rtu"],
+          "description": "MVP: Modbus only. mqtt and http_push protocols are deferred (see SOL-22)."
         },
         "default_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "default_unit_id": { "type": "integer", "minimum": 0, "maximum": 247 }
@@ -67,6 +68,7 @@
   "$defs": {
     "FormatType": {
       "type": "string",
+      "description": "Generic format types are decoded by the profile loader directly. Use 'custom' + 'decoder: <name>' for vendor-specific decoders registered with the loader (see profile-schema.md §6).",
       "enum": [
         "float32_be",
         "float32_le",
@@ -78,7 +80,7 @@
         "dword_high_first",
         "word",
         "ascii",
-        "acuvim_clock"
+        "custom"
       ]
     },
     "FingerprintRead": {
@@ -87,7 +89,12 @@
       "additionalProperties": false,
       "properties": {
         "address": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "length": { "type": "integer", "minimum": 1, "maximum": 125 },
+        "length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 125,
+          "description": "Length in 16-bit registers (each 2 bytes)."
+        },
         "format": { "$ref": "#/$defs/FormatType" },
         "expected": {},
         "expected_range": {
@@ -107,7 +114,13 @@
         { "required": ["expected_range"] },
         { "required": ["expected_contains"] },
         { "required": ["expect_exception"] }
-      ]
+      ],
+      "if": {
+        "not": { "required": ["expect_exception"] }
+      },
+      "then": {
+        "required": ["format"]
+      }
     },
     "Identifier": {
       "type": "object",
@@ -116,9 +129,25 @@
       "properties": {
         "logical": { "type": "string", "minLength": 1 },
         "address": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "length": { "type": "integer", "minimum": 1, "maximum": 125 },
+        "length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 125,
+          "description": "Length in 16-bit registers."
+        },
         "format": { "$ref": "#/$defs/FormatType" },
+        "decoder": {
+          "type": "string",
+          "description": "Required when format is 'custom'."
+        },
         "expected_contains": { "type": "string" }
+      },
+      "if": {
+        "properties": { "format": { "const": "custom" } },
+        "required": ["format"]
+      },
+      "then": {
+        "required": ["decoder"]
       }
     },
     "ReadBlock": {
@@ -147,7 +176,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 86400,
-          "description": "Poll interval in seconds."
+          "description": "Poll interval in seconds. MVP storage cadence equals poll cadence."
         },
         "metrics": {
           "type": "array",
@@ -169,13 +198,17 @@
         "offset": {
           "type": "integer",
           "minimum": 0,
-          "description": "Byte offset within the FC03 response payload."
+          "description": "Byte offset within the FC03 response payload. Loader enforces format-appropriate alignment (e.g., float32 offsets must be multiples of 4)."
         },
         "format": { "$ref": "#/$defs/FormatType" },
+        "decoder": {
+          "type": "string",
+          "description": "Required when format is 'custom'. Names a decoder registered with the profile loader."
+        },
         "scale": {
           "type": "number",
           "default": 1.0,
-          "description": "Final value = raw × scale."
+          "description": "Final value = raw × scale. Use to normalise device units to catalog units (e.g. 0.001 for W→kW)."
         },
         "sign": {
           "type": "string",
@@ -184,13 +217,19 @@
         "length": {
           "type": "integer",
           "minimum": 1,
-          "description": "Override-byte length, only meaningful for variable-length formats (e.g. ascii)."
+          "description": "Length in 16-bit registers (each 2 bytes). Only meaningful for variable-length formats (e.g. ascii). Default depends on format."
         },
         "aliased": {
           "type": "boolean",
           "default": false,
           "description": "True if this metric deliberately shares an offset with another (e.g. legacy alias)."
         }
+      },
+      "if": {
+        "properties": { "format": { "const": "custom" } }
+      },
+      "then": {
+        "required": ["decoder"]
       }
     },
     "ControlSpec": {
@@ -217,7 +256,11 @@
             "address": { "type": "integer", "minimum": 0, "maximum": 65535 },
             "offset": { "type": "integer", "minimum": 0, "default": 0 },
             "format": { "$ref": "#/$defs/FormatType" },
-            "length": { "type": "integer", "minimum": 1 }
+            "length": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Length in 16-bit registers."
+            }
           }
         },
         "readback_delay_ms": {

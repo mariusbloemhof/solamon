@@ -39,7 +39,11 @@ Modbus TCP via the AXM-WEB2 communication module. If AXM-WEB2 is not fitted, the
 
 ## 4. Fingerprint strategy
 
-The Acuvim L manual V2.0.3 documents **no identity registers** on the wire — no manufacturer code, model code, firmware version, or serial number is exposed via Modbus. So we cannot positively identify an Acuvim L by reading an ID register. Instead we use a **negative fingerprint** (the SunSpec common-model block at `0xC350` exists on Acuvim II but NOT on Acuvim L) combined with **positive capability probes** (registers known to exist on Acuvim L with sane expected values).
+The Acuvim L manual V2.0.3 documents **no identity registers** on the wire — no manufacturer code, model code, firmware version, or serial number is exposed via Modbus. So we cannot positively identify an Acuvim L by reading an ID register. Instead we use a **negative fingerprint** (the SunSpec common-model block at `0xC350` exists on Acuvim II *with AXM-WEB/WEB2* but not on Acuvim L) combined with **positive capability probes** (registers known to exist on Acuvim L with sane expected values).
+
+> **Known false-positive class — Acuvim II without AXM-WEB.** An Acuvim II without the WEB / WEB2 module also returns Modbus exception `0x02` at `0xC350` (per the [Acuvim II spec stub](../../../discovery/specs/acuvim_ii_modbus_registers.md) — the SunSpec block is gated on WEB-family firmware). The frequency probe at `0x0130` and the slave-address echo at `0x0101` may also pass on an Acuvim II. **The probe CLI's `--cross-check` flag mitigates this** by additionally reading the Acuvim II `0x4000` block — if that block returns sensible Float32 values, the device is an Acuvim II without WEB; if it errors, it's an Acuvim L. The fingerprint result is reported as "negative match" to make the lower confidence visible to the operator.
+>
+> **Action when MVP encounters this in the field:** rare in practice (Johan's two units have AXM-WEB2; Acuvim II is uncommon in the SA market). If it arises, the probe-CLI cross-check produces the right diagnostic; we then either configure the site as Acuvim II (when we add that profile) or note the unsupported config in the commissioning record.
 
 ```yaml
 fingerprint:
@@ -72,7 +76,12 @@ Five blocks at distinct cadences to balance freshness vs. Modbus traffic.
 
 ### 5.1 `realtime` — every 10 s — `0x0600`–`0x0649` (74 registers, Float32)
 
-The primary Float32 measurement block. Single FC03 batched read; 30+ metrics decoded by offset. **No scaling required** — Acuvim returns Float32 in engineering units.
+The primary Float32 measurement block. Single FC03 batched read; 30+ metrics decoded by offset.
+
+**Scaling notes:**
+
+- **Voltage / current / frequency / PF / unbalance** — Float32 in engineering units (V / A / Hz / unitless / %). **`scale: 1.0`** (not specified — schema default).
+- **Active / reactive / apparent power** — the Acuvim L manual declares the unit as **W / var / VA**. Our catalog uses kW / kvar / kVA. **`scale: 0.001`** is applied to all 17 power metrics. *To be verified against a multimeter on bench Day 3 (§7.2) — if the meter actually returns kW directly the scale is removed.*
 
 | Offset | Register | Logical metric | Format | Notes |
 |--------|----------|----------------|--------|-------|
@@ -143,9 +152,13 @@ THD totals. **Scaling: × 0.01** to get percent (raw is `(value / 10000) × 100`
 
 Per the spec doc, the peak active power demand entry is 4 registers: 2 for the Dword value, 2 for the timestamp (date HH+LL packed). For MVP, we read only the value (offset 0) and let the cloud add a `received_at` timestamp; decoding the meter's internal timestamp is post-MVP.
 
+The format is **`dword_high_first` (unsigned)** — Acuvim normally reports `|max|`, so even a site with significant grid export sees a non-negative peak demand value. If a future firmware revision ever returns signed peak demand (negative values during high-export windows), switch to `int32_be`. Flagged here for awareness.
+
+The manual quotes the unit as W; our catalog uses kW; **scale: 0.001**.
+
 | Offset | Register | Logical metric | Format | Scale |
 |--------|----------|----------------|--------|-------|
-| 0 | `0x1024`-`0x1025` | `active_power_demand_max` | dword_high_first | 1.0 |
+| 0 | `0x1024`-`0x1025` | `active_power_demand_max` | dword_high_first (unsigned) | 0.001 |
 
 ### 5.5 `clock` — every 3600 s — `0x0184`–`0x018A` (7 registers)
 
@@ -190,17 +203,46 @@ control:
 
 The MVP control demo target. Operator picks 1/5/10/15/30 from the dashboard control panel; agent issues FC06 write to `0x010C`; sleeps 500 ms; reads back; confirms or fails. State machine in main spec §10.
 
-## 7. Open empirical question — `0x0600` vs `0x4000`
+## 7. Open empirical questions — bench Day 3 test plan
+
+Two related questions get answered with the same hardware setup:
+
+### 7.1 `0x0600` vs `0x4000` block
 
 Johan reports that the Acuvim II Modbus map (which uses `0x4000`+ for real-time measurements) "works on the Acuvim L". AccuEnergy's official docs disagree — Acuvim L uses `0x0600`+, Acuvim II uses `0x4000`+. The profile above commits to the documented `0x0600` block.
 
-**To be resolved on bench Day 3** via `solamon-probe`, which reads BOTH `0x0600` and `0x4000` from the same Acuvim L, sanity-checks values against a multimeter, and reports findings. Three possible outcomes:
+`solamon-probe` reads BOTH `0x0600` and `0x4000` from the same Acuvim L, decodes both, and reports findings. Three possible outcomes:
 
 1. Both blocks return identical, sensible Float32 → firmware aliases the blocks; pick `0x0600` (better-documented); note the alternative as fallback.
 2. `0x0600` returns sensible, `0x4000` returns garbage / exception → the profile above is correct; Johan's home flow has been reading nonsense; recommend he correct it.
 3. `0x0600` errors and `0x4000` works → atypical L variant; rebase the profile to `0x4000`.
 
-The probe CLI captures this in its report; whoever runs Day 3 commits the empirical answer to this doc as a footnote.
+### 7.2 Power-metric units — W vs kW
+
+The Acuvim L manual we ingested ([V2.0.3 register table](../../../discovery/specs/acuvim_l_modbus_registers.md)) declares the primary Float32 power fields in **W / var / VA**. The Acuvim II manual for the same fields declares **kW / kvar / kVA**. Vendor inconsistency between sister products is plausible but worth verifying.
+
+**Test:** with the Acuvim L on the bench wired to a known load, compare the decoded `active_power_total` (after applying our `scale: 0.001`) against a clamp-meter reading on the live conductors:
+
+- If they agree (e.g., both ~12 kW) → the manual was right, our scale is correct.
+- If they disagree by 1000× → remove the `scale: 0.001` from the 17 power metrics in `acuvim_l.yaml` (manual mislabels the unit as W; it's actually kW like Acuvim II).
+
+### 7.3 Fast Read mode interference
+
+The AXM-WEB2 web UI has a "Fast Read mode" toggle. When enabled, the meter exposes a 100 ms-update register block at `0x3000`–`0x301D` and **suspends all other Modbus protocols including the standard `0x0600` block we depend on.**
+
+`solamon-probe` includes a Fast Read sanity check: if `0x0600` returns Modbus exception but `0x3000` returns sensible values, the probe reports "Fast Read mode is enabled — disable in AXM-WEB2 web UI before commissioning". Per our [register scope confirmation doc §K7](../../../requirements/acuvim_mvp_register_scope.md), we ask Johan to confirm Fast Read is OFF before the bench session.
+
+### 7.4 Recording the answers
+
+The probe-CLI report captures all three above. Whoever runs Day 3 commits a short empirical footnote here:
+
+```
+> **Bench Day 3 result (YYYY-MM-DD):**
+> - 0x0600 vs 0x4000: <outcome>
+> - Power units (W vs kW): <outcome>
+> - Fast Read mode: <off|on as found>
+> - Action taken: <none | profile updated | etc.>
+```
 
 ## 8. Acceptance criteria
 

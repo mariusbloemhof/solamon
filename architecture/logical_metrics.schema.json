@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://solamon.example/schemas/logical-metrics-1.0.json",
+  "title": "Solamon Logical Metric Catalog",
+  "description": "Schema for architecture/logical_metrics.yaml. Spec: docs/specs/device-library/logical-metric-catalog.md.",
+  "type": "object",
+  "required": ["schema_version", "metrics"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Catalog schema version (semver, major.minor)."
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": { "$ref": "#/$defs/Metric" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "Metric": {
+      "type": "object",
+      "required": ["label", "unit", "data_type", "category", "is_cumulative"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable name for UI display."
+        },
+        "unit": {
+          "type": "string",
+          "description": "SI unit string. Empty string for unitless ratios (e.g. PF)."
+        },
+        "data_type": {
+          "type": "string",
+          "enum": ["float", "int", "bool", "enum", "bitfield", "datetime", "string"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "power",
+            "energy",
+            "voltage",
+            "current",
+            "power_factor",
+            "frequency",
+            "demand",
+            "quality",
+            "configuration",
+            "control",
+            "derived"
+          ]
+        },
+        "is_cumulative": { "type": "boolean" },
+        "monotonic": {
+          "type": "boolean",
+          "description": "Required when is_cumulative=true. Indicates value never decreases except on explicit reset."
+        },
+        "direction_convention": {
+          "type": "string",
+          "description": "Required for any metric where sign carries semantic meaning (active power, reactive power, etc.)."
+        },
+        "expected_range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[min, max] sanity range, used by probe CLI and ingestion validation."
+        },
+        "is_writable": {
+          "type": "boolean",
+          "default": false,
+          "description": "True for metrics the operator can change via control commands."
+        },
+        "allowed_values": {
+          "type": "array",
+          "description": "Required when is_writable=true and value is constrained (e.g. demand_window_minutes)."
+        },
+        "enum_values": {
+          "type": "object",
+          "description": "Required when data_type=enum. Maps integer codes to symbolic strings. Keys MUST be quoted strings of integer codes (JSON requirement).",
+          "patternProperties": {
+            "^[0-9]+$": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "is_cumulative": { "const": true } }, "required": ["is_cumulative"] },
+          "then": { "required": ["monotonic"] }
+        },
+        {
+          "if": { "properties": { "is_writable": { "const": true } }, "required": ["is_writable"] },
+          "then": {
+            "anyOf": [
+              { "required": ["allowed_values"] },
+              { "required": ["expected_range"] }
+            ]
+          }
+        },
+        {
+          "if": { "properties": { "data_type": { "const": "enum" } }, "required": ["data_type"] },
+          "then": { "required": ["enum_values"] }
+        }
+      ]
+    }
+  }
+}
