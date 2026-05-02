@@ -87,9 +87,10 @@ async def execute_command(client, cmd, control_spec, value):
     # Encode the value per profile format
     encoded = encode_value(value, control_spec.format)
 
-    # Send "acknowledged" first — optional, mostly for debug / live-status feedback.
-    # Some flows skip this and go straight to confirmed/failed.
-    await publish_ack(client, build_ack(cmd, status="acknowledged"))
+    # MVP: the agent only publishes terminal acks (confirmed / failed).
+    # The intermediate `acknowledged` state was dropped at the cloud level —
+    # the operator UI shows `sent` for the ~1-2 s of Modbus + read-back, then
+    # transitions directly to confirmed/failed.
 
     try:
         # FC06 (write single register) or FC16 (write multiple)

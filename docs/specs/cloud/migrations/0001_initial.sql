@@ -18,6 +18,8 @@ CREATE SCHEMA IF NOT EXISTS timeseries;
 CREATE TABLE IF NOT EXISTS app.schema_migrations (
     filename     TEXT PRIMARY KEY,
     applied_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    -- TODO post-MVP: add `checksum TEXT` column when we move to Alembic
+    -- so post-apply edits to migration files can be detected.
 );
 
 INSERT INTO app.schema_migrations (filename)
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS app.organisation (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                  TEXT NOT NULL,
     slug                  TEXT NOT NULL UNIQUE,
+    -- billing_contact_email reserved for the billing engine epic; unused in MVP.
     billing_contact_email TEXT,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -41,6 +44,9 @@ CREATE TABLE IF NOT EXISTS app.site (
     slug                TEXT NOT NULL UNIQUE
                         CHECK (slug ~ '^[a-z0-9][a-z0-9-]*[a-z0-9]$'),
     location            TEXT,
+    -- timezone is validated at the application layer (Pydantic against
+    -- pytz / zoneinfo). A CHECK against pg_timezone_names is not possible
+    -- because pg_timezone_names is volatile.
     timezone            TEXT NOT NULL DEFAULT 'Africa/Johannesburg',
     grid_connection_kw  NUMERIC,
     is_active           BOOLEAN NOT NULL DEFAULT true,
@@ -48,6 +54,8 @@ CREATE TABLE IF NOT EXISTS app.site (
 
     -- MVP-only: per-site MQTT credentials served to the Pi at /edge/config.
     -- Plaintext password — DB-level access is admin-only in MVP.
+    -- Backups (S3) MUST have SSE-S3 encryption-at-rest + restricted bucket
+    -- access (see data-model.md §7).
     -- Migrates to mTLS device certificates when we move to AWS IoT Core.
     mqtt_username       TEXT NOT NULL UNIQUE,
     mqtt_password       TEXT NOT NULL,
@@ -60,6 +68,10 @@ CREATE INDEX IF NOT EXISTS idx_site_organisation ON app.site (organisation_id);
 -- ─── app.device_type ───────────────────────────────────────────────────────
 -- One row per supported device variant. profile_yaml is the parsed
 -- architecture/profiles/<slug>.yaml file as JSONB.
+--
+-- Note: YAML hex addresses (0x0600) are stored as integers in JSONB. A future
+-- profile editor UI (SOL-12) needs to render integer values as hex strings to
+-- preserve the readable form humans use.
 CREATE TABLE IF NOT EXISTS app.device_type (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     manufacturer    TEXT NOT NULL,
@@ -84,7 +96,13 @@ CREATE TABLE IF NOT EXISTS app.device (
     unit_id              INTEGER NOT NULL DEFAULT 1,
     is_billing_source    BOOLEAN NOT NULL DEFAULT false,
     is_controllable      BOOLEAN NOT NULL DEFAULT true,
-    last_seen_at         TIMESTAMPTZ,                  -- updated on every successful read
+    -- last_seen_at is updated on every successful telemetry message arrival
+    -- (not by heartbeats — heartbeats are per-Pi, not per-device).
+    last_seen_at         TIMESTAMPTZ,
+    -- status is updated by:
+    --   - telemetry arrival → 'online' + last_seen_at = now()
+    --   - stale-detector background task → 'offline' if no telemetry for >5min
+    --   - explicit fault signals (TBD)
     status               TEXT NOT NULL DEFAULT 'unknown'
                           CHECK (status IN
                             ('online', 'offline', 'unreachable', 'fault', 'unknown')),
@@ -101,6 +119,10 @@ CREATE INDEX IF NOT EXISTS idx_device_type ON app.device (device_type_id);
 
 -- ─── app.logical_metric ────────────────────────────────────────────────────
 -- Seeded from architecture/logical_metrics.yaml at deploy time.
+--
+-- Note: enum_values JSONB stores keys as strings (JSON requirement) even
+-- though the wire data may be integers. The seed script and any code
+-- comparing integer Modbus reads against the JSONB map must coerce to string.
 CREATE TABLE IF NOT EXISTS app.logical_metric (
     key                    TEXT PRIMARY KEY
                             CHECK (key ~ '^[a-z][a-z0-9_]*$'),
@@ -119,8 +141,9 @@ CREATE TABLE IF NOT EXISTS app.logical_metric (
     enum_values            JSONB
 );
 
--- ─── app.user ──────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS app."user" (
+-- ─── app.users ─────────────────────────────────────────────────────────────
+-- Renamed from "user" to avoid the Postgres reserved-word quoting overhead.
+CREATE TABLE IF NOT EXISTS app.users (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organisation_id  UUID NOT NULL REFERENCES app.organisation(id),
     email            TEXT NOT NULL UNIQUE,
@@ -137,11 +160,11 @@ CREATE TABLE IF NOT EXISTS app."user" (
 
 -- ─── app.site_access ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS app.site_access (
-    user_id        UUID NOT NULL REFERENCES app."user"(id),
+    user_id        UUID NOT NULL REFERENCES app.users(id),
     site_id        UUID NOT NULL REFERENCES app.site(id),
     access_level   TEXT NOT NULL DEFAULT 'view'
                     CHECK (access_level IN ('view', 'operate', 'admin')),
-    granted_by     UUID REFERENCES app."user"(id),
+    granted_by     UUID REFERENCES app.users(id),
     granted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, site_id)
 );
@@ -149,21 +172,29 @@ CREATE TABLE IF NOT EXISTS app.site_access (
 CREATE INDEX IF NOT EXISTS idx_site_access_site ON app.site_access (site_id);
 
 -- ─── app.control_command ───────────────────────────────────────────────────
+-- State machine: pending → sent → confirmed | failed | expired
+-- (The 'acknowledged' intermediate state was removed for MVP simplicity.
+--  Pi publishes only confirmed/failed acks.)
+--
+-- Late-ack handling: if a Pi ack arrives after status='expired', the ack
+-- is logged as an audit_entry with action='command.late_ack' but the
+-- command status is NOT changed back. Operator manually reconciles via
+-- the audit trail.
 CREATE TABLE IF NOT EXISTS app.control_command (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id            UUID NOT NULL REFERENCES app.device(id),
     logical_metric_key   TEXT NOT NULL REFERENCES app.logical_metric(key),
-    issued_by            UUID NOT NULL REFERENCES app."user"(id),
+    issued_by            UUID NOT NULL REFERENCES app.users(id),
     issued_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     parameters           JSONB NOT NULL,
     status               TEXT NOT NULL DEFAULT 'pending'
                           CHECK (status IN
-                            ('pending', 'sent', 'acknowledged',
-                             'confirmed', 'failed', 'expired')),
+                            ('pending', 'sent', 'confirmed', 'failed', 'expired')),
     sent_at              TIMESTAMPTZ,
-    acknowledged_at      TIMESTAMPTZ,
+    acknowledged_at      TIMESTAMPTZ,                -- preserved for back-compat; populated on terminal ack
     confirmed_value      JSONB,
     error_message        TEXT,
+    last_publish_error   TEXT,                        -- populated when MQTT publish failed; cleared on retry success
     expires_at           TIMESTAMPTZ NOT NULL
 );
 
@@ -173,13 +204,13 @@ CREATE INDEX IF NOT EXISTS idx_control_command_device_issued
 -- Partial index for the TTL reaper background task — only scans active commands.
 CREATE INDEX IF NOT EXISTS idx_control_command_pending_expires
     ON app.control_command (expires_at)
-    WHERE status IN ('pending', 'sent', 'acknowledged');
+    WHERE status IN ('pending', 'sent');
 
 -- ─── app.audit_entry ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS app.audit_entry (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     time          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    actor_id      UUID REFERENCES app."user"(id),     -- NULL for system actions
+    actor_id      UUID REFERENCES app.users(id),     -- NULL for system actions
     action        TEXT NOT NULL,
     entity_type   TEXT NOT NULL,
     entity_id     UUID,
@@ -190,8 +221,19 @@ CREATE TABLE IF NOT EXISTS app.audit_entry (
 
 CREATE INDEX IF NOT EXISTS idx_audit_entry_time ON app.audit_entry (time DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_entry_entity ON app.audit_entry (entity_type, entity_id);
+-- TODO post-MVP: when audit-browser UI ships, add:
+--   CREATE INDEX idx_audit_entry_actor_time ON app.audit_entry (actor_id, time DESC);
 
 -- ─── app.device_snapshot ───────────────────────────────────────────────────
+-- Latest values per device, keyed by logical metric name. Includes ALL
+-- metrics — numeric AND non-numeric (datetime, enum, string, bool). The
+-- snapshot is the authoritative store for non-numeric metrics; the
+-- timeseries.reading hypertable holds numeric metrics only (see §3.11
+-- in data-model.md).
+--
+-- snapshot_time is the timestamp of the most-recent message that updated
+-- this row. Individual metrics inside `metrics` may be older — see
+-- data-model.md §3.10 for the disambiguation note.
 CREATE TABLE IF NOT EXISTS app.device_snapshot (
     device_id        UUID PRIMARY KEY REFERENCES app.device(id),
     snapshot_time    TIMESTAMPTZ NOT NULL,
@@ -202,7 +244,9 @@ CREATE TABLE IF NOT EXISTS app.device_snapshot (
 
 -- ─── app.dead_letter ───────────────────────────────────────────────────────
 -- Failed MQTT messages (parse errors, schema violations, unknown devices).
--- Reviewed periodically by operators; retained for 30 days.
+-- Reviewed periodically by operators.
+-- Cleanup: app-level periodic sweep deletes rows older than 30 days
+-- (see ingestion-worker.md §11). pg_cron is not used in MVP.
 CREATE TABLE IF NOT EXISTS app.dead_letter (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     received_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -219,6 +263,12 @@ CREATE INDEX IF NOT EXISTS idx_dead_letter_received ON app.dead_letter (received
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ─── timeseries.reading ────────────────────────────────────────────────────
+-- Numeric metrics ONLY. Non-numeric metrics (datetime, enum, string, bool,
+-- bitfield) are stored on app.device_snapshot.metrics and not duplicated
+-- here — they're config-like, low volume, and the JSONB column is the
+-- right home for them.
+--
+-- The ingestion worker enforces this routing; see ingestion-worker.md §4.
 CREATE TABLE IF NOT EXISTS timeseries.reading (
     time                TIMESTAMPTZ NOT NULL,
     device_id           UUID NOT NULL REFERENCES app.device(id),
@@ -227,7 +277,9 @@ CREATE TABLE IF NOT EXISTS timeseries.reading (
     raw_value           BIGINT,
     quality             TEXT NOT NULL DEFAULT 'good'
                          CHECK (quality IN ('good', 'uncertain', 'bad')),
-    block_name          TEXT
+    block_name          TEXT,
+    received_at         TIMESTAMPTZ                  -- cloud-receive timestamp
+                         DEFAULT now()                -- (NULL allowed for backfilled / replayed rows)
 );
 
 -- Convert to hypertable (idempotent — does nothing if already a hypertable).

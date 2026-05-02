@@ -12,22 +12,27 @@ The control command lifecycle — REST POST → DB persistence → MQTT publish 
 Reproduced from main spec §10 for self-containment:
 
 ```
-        ┌─ pending ──── operator clicks "Apply"
-        │              FastAPI: validate, persist, MQTT publish
+        ┌─ pending ──── operator clicks "Apply"; FastAPI persists row + tries MQTT publish
+        │
         ▼
-   ┌─ sent ──────── MQTT publish accepted by broker
+   ┌─ sent ──────── MQTT publish ack from broker received (within bounded retry budget)
    │              (cloud sets sent_at)
    ▼
-┌─ acknowledged ─ Pi received and validated; about to write Modbus
+┌─ confirmed ─── Pi: Modbus write + read-back succeeded; ack landed
 │
-▼
-┌─ confirmed ─── Modbus write + read-back succeeded
-│
-└─ failed ───── Modbus write or read-back failed; ack with error
+└─ failed ───── Pi: Modbus write or read-back failed; ack with error
    ─ expired ─── TTL exceeded without confirmation; cloud reaper
 ```
 
+The intermediate `acknowledged` state from earlier drafts was dropped for MVP simplicity. The Pi publishes only terminal acks (`confirmed` / `failed`); the operator UI shows `sent` until that arrives (typically within 1-2 s).
+
 Every transition writes an `app.audit_entry` row. The control panel UI subscribes to `/api/v1/ws/commands/{id}/live` and re-renders on each transition.
+
+### 1.1 Late ack handling
+
+If a Pi ack arrives after the cloud has already marked the command `expired`, the cloud writes an `audit_entry` with `action='command.late_ack'` capturing the late `confirmed_value`, but does NOT change `control_command.status` (it stays `expired`). Rationale: the state machine is a clean directed graph; reverting from a terminal state would require additional states (`confirmed_late`, `failed_late`) that don't pull weight in MVP. The audit trail is sufficient — the operator can manually reconcile if needed.
+
+This means: a slow LTE link can produce a divergence where the cloud believes a command expired but the device actually applied the write. The audit entry is the canary; the operator UI shows it in the command's audit list as a warning row.
 
 ## 2. Components
 
@@ -37,7 +42,8 @@ The control relay is conceptually three things, all running in the same FastAPI 
 |-----------|---------|------|
 | **Issuer** (HTTP handler) | `POST /api/v1/sites/{slug}/devices/{id}/commands` | Persist `pending` row, MQTT publish, mark `sent`, return 202 |
 | **Ack handler** (MQTT subscriber) | `solamon/+/commands/+/ack` message | Update row to `confirmed`/`failed`, emit WS message |
-| **TTL reaper** (background task) | Every 30 s | Find rows still in pending/sent/acknowledged past `expires_at`, mark `expired`, emit WS message |
+| **TTL reaper** (background task) | Every 30 s | Find rows still in pending/sent past `expires_at`, mark `expired`, emit WS message |
+| **Publish retry** (background task) | Every 15 s | Find rows still in `pending` (publish failed) and retry the MQTT publish until expires_at |
 
 ## 3. Issuer (HTTP handler)
 
@@ -64,7 +70,7 @@ async def issue_command(slug: str, device_id: UUID, body: CommandIssue, user: Us
         raise ProblemDetails(422, "value_not_allowed", value)
 ```
 
-### 3.2 Persist + publish (transactional)
+### 3.2 Persist + publish (transactional persist; retried publish)
 
 ```python
 async with db.transaction():
@@ -84,34 +90,81 @@ async with db.transaction():
         after=cmd.dict(),
     )
 
-# MQTT publish OUTSIDE the DB transaction — if MQTT publish fails after commit,
-# the TTL reaper will mark the command expired in 5 min. We don't roll back the DB
-# row because we want the audit trail of "we tried to issue this".
-try:
-    await mqtt.publish(
-        topic=f"solamon/{slug}/commands/{device.id}",
-        payload=command_to_mqtt_payload(cmd),
-        qos=1,
-    )
-    await db.update_control_command(cmd.id, status="sent", sent_at=now())
-    await db.create_audit_entry(
-        actor_id=None,  # system
-        action="command.sent",
-        entity_type="control_command",
-        entity_id=cmd.id,
-    )
-except MqttError as e:
-    # Stay in 'pending' — the publish failed; cloud can retry on next operator request
-    # or operator can re-issue. TTL reaper covers the worst case.
-    log.error("mqtt publish failed", cmd_id=cmd.id, error=e)
+# MQTT publish OUTSIDE the DB transaction (the row stays around as audit trail
+# even if publish fails). Bounded retry inside the request budget.
+publish_succeeded = await publish_with_retry(
+    topic=f"solamon/{slug}/commands/{device.id}",
+    payload=command_to_mqtt_payload(cmd),
+    max_attempts=5,
+    initial_backoff_ms=100,
+    max_backoff_ms=1000,
+    total_budget_ms=2000,
+)
 
-# 202 + Location header
-return Response(status_code=202, headers={"Location": f"/api/v1/commands/{cmd.id}"}, body=cmd)
+if publish_succeeded:
+    await db.update_control_command(cmd.id, status="sent", sent_at=now())
+    await db.create_audit_entry(actor_id=None, action="command.sent",
+                                entity_type="control_command", entity_id=cmd.id)
+    return Response(status_code=202,
+                    headers={"Location": f"/api/v1/commands/{cmd.id}"},
+                    body=cmd_with_status_sent)
+else:
+    # Publish exhausted within the request budget. Row stays at status=pending
+    # with last_publish_error populated. The background retry task picks it up.
+    await db.update_control_command(
+        cmd.id, last_publish_error="mqtt_unreachable_during_request_budget"
+    )
+    if broker_currently_unreachable():
+        # Hard down — fail fast so the operator sees the problem
+        return Response(status_code=503, body=cmd_with_status_pending_and_error)
+    else:
+        # Transient — accept; background retry should catch up
+        return Response(status_code=202,
+                        headers={"Location": f"/api/v1/commands/{cmd.id}"},
+                        body=cmd_with_status_pending_and_error)
 ```
 
-### 3.3 Why 202 not 201
+### 3.3 Background publish retry
 
-The command isn't *complete* when the HTTP response goes out — it's `pending` or at best `sent`. 202 Accepted communicates "we got your request, it's being processed; check the resource for the final state." The web UI's command panel polls (or subscribes via WebSocket) for status.
+A background task scans for commands stuck at `status='pending'` (no `sent_at`) and retries the MQTT publish:
+
+```python
+async def publish_retry_task():
+    while not shutdown:
+        await asyncio.sleep(15)                # 15-second tick
+        try:
+            stuck = await db.fetch(
+                """
+                SELECT * FROM app.control_command
+                 WHERE status = 'pending' AND expires_at > now()
+                """
+            )
+            for cmd in stuck:
+                # Single-shot retry per tick; the next tick covers the next attempt
+                ok = await publish_with_retry(... max_attempts=1 ...)
+                if ok:
+                    await db.update_control_command(
+                        cmd.id, status="sent", sent_at=now(),
+                        last_publish_error=None
+                    )
+                    await db.create_audit_entry(action="command.sent", ...)
+        except Exception as e:
+            log.error("publish_retry_task_failed", error=str(e))
+```
+
+Combined with the TTL reaper (§5), commands either land at `sent` within 5 minutes of issue or transition to `expired`. The operator UI surfaces `last_publish_error` so the admin can see *why* a pending command isn't moving.
+
+### 3.4 Why 202 (or 503) — response semantics
+
+The command isn't *complete* when the HTTP response goes out — it's `pending` or at best `sent`. The response code communicates broker reachability; the response body's `status` field communicates publish outcome. The combinations:
+
+| HTTP | Resource `status` | `last_publish_error` | Means |
+|------|------------------|---------------------|-------|
+| 202 | `sent` | null | Happy path — publish succeeded; Pi will ack within seconds |
+| 202 | `pending` | populated | Transient publish trouble; background retry kicks in |
+| 503 | `pending` | populated | Broker hard down; operator should investigate |
+
+The web UI inspects the `status` field of the returned resource to know which state it's in and either subscribes via WebSocket (sent path) or surfaces the error to the operator (pending path).
 
 ## 4. Ack handler (MQTT subscriber)
 
@@ -125,10 +178,28 @@ async def handle_command_ack(topic: str, payload: bytes):
     cmd = await db.get_control_command(msg.id)
     if cmd is None:
         log.warn("ack for unknown command", id=msg.id)
-        return                                       # late ack for an expired-then-deleted cmd
-    if cmd.status in ("confirmed", "failed", "expired"):
+        return                                       # late ack for a long-deleted cmd
+    if cmd.status in ("confirmed", "failed"):
         log.warn("ack for terminal command", id=msg.id, status=cmd.status)
         return                                       # ignore late dupes / replays
+    if cmd.status == "expired":
+        # Late ack — Pi actually performed the write but the ack was slow.
+        # Don't change status; capture in audit trail for operator review.
+        await db.create_audit_entry(
+            actor_id=None,
+            action="command.late_ack",
+            entity_type="control_command",
+            entity_id=cmd.id,
+            after={
+                "received_status": msg.status,
+                "confirmed_value": msg.confirmed_value,
+                "received_at": msg.received_at,
+                "note": "Device may have applied this command after cloud expired it. Manual reconciliation may be needed.",
+            },
+        )
+        log.warn("late_ack_post_expired",
+                 id=msg.id, status=msg.status, confirmed_value=msg.confirmed_value)
+        return
 
     async with db.transaction():
         await db.update_control_command(
@@ -180,12 +251,12 @@ async def ttl_reaper():
 ```sql
 UPDATE app.control_command
    SET status = 'expired'
- WHERE status IN ('pending', 'sent', 'acknowledged')
+ WHERE status IN ('pending', 'sent')
    AND expires_at < $1
 RETURNING *;
 ```
 
-The partial index on `expires_at WHERE status IN ('pending', 'sent', 'acknowledged')` (created in `0001_initial.sql`) makes this query fast — it only scans active commands.
+The partial index on `expires_at WHERE status IN ('pending', 'sent')` (created in `0001_initial.sql`) makes this query fast — it only scans active commands.
 
 ## 6. WebSocket subscription contract
 

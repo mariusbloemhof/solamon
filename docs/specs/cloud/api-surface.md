@@ -43,11 +43,11 @@ JWT signed with HS256. Secret is `SOLAMON_JWT_SECRET` env var (32-byte random; r
 
 ```
 POST /api/v1/auth/logout
-Request:  (empty; bearer token in header)
+Request:  (empty; no auth required)
 Response: 204
 ```
 
-For MVP this is a no-op response (JWT is stateless; logout is a client-side token discard). Post-MVP we add a JWT denylist for explicit revocation.
+For MVP this is a no-op response (JWT is stateless; logout is a client-side token discard). Auth is **not required** so an expired-token client can still call it without a re-auth dance. Post-MVP we add a JWT denylist for explicit revocation, and at that point logout requires auth.
 
 ### 3.3 Identity
 
@@ -60,7 +60,9 @@ Used by Next.js to populate the user menu and gate route access.
 
 ### 3.4 Edge agent auth
 
-The Pi authenticates to **Mosquitto**, not to this REST API, via the per-site MQTT username/password. **Except** for the bootstrap call: `GET /edge/config/{site_slug}` accepts a bearer token equal to the per-site MQTT password (i.e., the same secret authenticates both the MQTT connection and the config-fetch HTTP call). This keeps the Pi to a single secret in MVP.
+The Pi authenticates to **Mosquitto**, not to this REST API, via the per-site MQTT username/password. **Except** for the bootstrap call: `GET /edge/config/{site_slug}` accepts a bearer token equal to the per-site MQTT password.
+
+**Why the same secret authenticates both:** the Pi has exactly one piece of long-lived credential material per site (provisioned at install time by `solamon-edge-install.sh`). That secret is the MQTT password; the cloud reuses it as the HTTP bearer for the config-fetch call. The response body then includes the same secret in the `mqtt.password` field — yes, the Pi receives a value it already had — because the response is a complete, self-contained config the Pi atomically writes to `site_config.yaml` (no need to merge with bootstrap inputs). Practically harmless. When we move to AWS IoT Core ([SOL-10](https://linear.app/solamon/issue/SOL-10)) the Pi switches to mTLS device certs and this dual-use stops.
 
 ## 4. Endpoint catalogue
 
@@ -118,14 +120,20 @@ GET    /api/v1/sites/{slug}/devices/{device_id}/readings
 
 For MVP, only `aggregate=raw` is supported. Continuous aggregates (1-min, 15-min, 1-hour) are post-MVP; the API accepts the param now so the front end can be implemented once and the back end fills in later.
 
+**Why the 30-day cap on raw queries:** at 10 s cadence per metric, a 90-day raw query (the retention window) returns ~780k points per metric. Even with the index, that's 5+ MB of JSON per metric and a multi-second response. The 30-day cap keeps response size and latency reasonable. Longer windows go through the (post-MVP) aggregated views. The retention window stays at 90 days so the data is available for back-filled aggregate queries; only the *raw* query is capped.
+
 ### 4.4 Control
 
 ```
 POST   /api/v1/sites/{slug}/devices/{device_id}/commands
        Body: { "logical_metric": "demand_window_minutes", "type": "set_value", "parameters": { "value": 30 } }
-       Response: 202 Accepted
+       Response: 202 Accepted (success path: MQTT publish succeeded within bounded retry budget)
                  Location: /api/v1/commands/{id}
-                 Body: ControlCommand resource (status=pending or sent)
+                 Body: ControlCommand with status=sent
+                       OR status=pending + last_publish_error populated
+                       (caller inspects status to know which)
+                 503 Service Unavailable (broker is down beyond retry budget;
+                       row exists at status=pending; background worker retries until expires_at)
 
 GET    /api/v1/sites/{slug}/devices/{device_id}/commands?limit=50
        → ControlCommand[] (paginated, recent first)
@@ -149,6 +157,7 @@ GET    /api/v1/commands/{id}
   "acknowledged_at": "...",
   "confirmed_value": { "value": 30 },
   "error_message": null,
+  "last_publish_error": null,
   "expires_at": "...",
   "issued_by": { "id": "...", "display_name": "Marius" }
 }
@@ -165,6 +174,8 @@ GET    /api/v1/device-profiles/{profile_slug}             → DeviceProfile (ful
 These are read by the Next.js admin pages for "browse profiles" (read-only in MVP — editor is [SOL-12](https://linear.app/solamon/issue/SOL-12)).
 
 ### 4.6 Edge-facing config
+
+**Bootstrap inputs to the Pi:** the Pi must already know its `site_slug` and the per-site bearer token before this call. Both are written to `/etc/solamon/bootstrap.yaml` by `solamon-edge-install.sh` at install time; the install script takes them as arguments. See [`../infrastructure/pi-install.md`](../infrastructure/pi-install.md) (when written) for the install-script contract.
 
 ```
 GET    /api/v1/edge/config/{site_slug}
@@ -197,17 +208,19 @@ The Pi calls this once at startup, caches the response in `/etc/solamon/site_con
 ### 4.7 Health
 
 ```
-GET    /health                                            → { "status": "ok", "db": "ok", "mqtt": "ok" }
+GET    /api/v1/health                                     → { "status": "ok", "db": "ok", "mqtt": "ok" }
 GET    /api/v1/sites/{slug}/health                        → SiteHealth
 ```
 
-`/health` is unauthenticated for liveness probes. `/api/v1/sites/{slug}/health` requires auth and reports per-site Pi heartbeat freshness, last-reading age, Modbus error rate, buffer depth.
+`/api/v1/health` is unauthenticated and used for ECS / load-balancer liveness probes. `/api/v1/sites/{slug}/health` requires auth and reports per-site Pi heartbeat freshness, last-reading age, Modbus error rate, buffer depth.
+
+Both paths sit under `/api/v1/` for consistency. Caddy routes `/api/v1/health` directly to FastAPI; no special-casing in the proxy config.
 
 ## 5. WebSocket endpoints
 
 ### 5.1 Live device stream — `/api/v1/ws/sites/{slug}/devices/{device_id}/live`
 
-After authentication (JWT in `Sec-WebSocket-Protocol` header or `?token=` query string), the server subscribes the connection to live telemetry and snapshot updates for the device.
+After authentication (JWT in the `Sec-WebSocket-Protocol` header **only** — the `?token=` query string variant is explicitly disallowed because URLs leak to access logs / browser history / proxy logs / monitoring), the server subscribes the connection to live telemetry and snapshot updates for the device.
 
 **Server → client messages:**
 
@@ -271,6 +284,10 @@ None in MVP. Add when traffic justifies (or when we expose endpoints to a third 
 FastAPI auto-generates OpenAPI 3.1 at `/api/v1/openapi.json` (and Swagger UI at `/api/v1/docs`, ReDoc at `/api/v1/redoc`). The skeletal `openapi.yaml` in this folder is the **starting handshake** — the implementer expands it as routes are built; the live API publishes the authoritative version.
 
 The Next.js client generates a typed TypeScript SDK from the live `/openapi.json` at build time using `openapi-typescript`. This keeps the client and server schemas in lockstep.
+
+**WebSocket caveat:** OpenAPI 3.1 does not natively spec WebSocket endpoints. The WebSocket message envelope shapes (`{type, data}` for both `/ws/.../live` endpoints) ARE declared in `openapi.yaml` `components.schemas` for documentation and SDK reuse, but the ws connections themselves are hand-typed in the web UI. AsyncAPI was considered and deferred — the overhead of maintaining a second contract document outweighs the benefit at MVP scope.
+
+**Compression:** Caddy compresses `application/json` responses with gzip / zstd by default (no extra config). The `EdgeConfig` payload (~30 KB JSON of profile + catalog) wire-compresses to ~5 KB. Don't disable.
 
 ## 9. Acceptance criteria
 

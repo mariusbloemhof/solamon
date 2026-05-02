@@ -181,12 +181,13 @@ components:
         logical_metric: { type: string }
         type: { type: string }
         parameters: { type: object, additionalProperties: true }
-        status: { type: string, enum: [pending, sent, acknowledged, confirmed, failed, expired] }
+        status: { type: string, enum: [pending, sent, confirmed, failed, expired] }
         issued_at: { type: string, format: date-time }
         sent_at: { type: string, format: date-time }
         acknowledged_at: { type: string, format: date-time }
         confirmed_value: { type: object, additionalProperties: true }
         error_message: { type: string, nullable: true }
+        last_publish_error: { type: string, nullable: true, description: "MQTT publish failure reason; populated when bounded retry exhausts; cleared on subsequent retry success" }
         expires_at: { type: string, format: date-time }
         issued_by:
           type: object
@@ -243,7 +244,10 @@ components:
             broker_host: { type: string }
             broker_port: { type: integer }
             username: { type: string }
-            password: { type: string }
+            password:
+              type: string
+              format: password
+              description: "Sensitive — never log. Same value as the bootstrap bearer token."
             client_id: { type: string }
             topic_prefix: { type: string }
 
@@ -255,6 +259,27 @@ components:
         last_reading_at: { type: string, format: date-time }
         modbus_errors_per_minute: { type: number }
         edge_buffer_depth_seconds: { type: integer }
+
+    # ─── WebSocket message envelopes (referenced from api-surface.md §5) ─────────
+    # OpenAPI 3.1 doesn't natively spec WebSocket; declaring shapes here so the
+    # web-ui SDK and ad-hoc clients have a contract to type against.
+    WSDeviceLiveMessage:
+      type: object
+      required: [type, data]
+      discriminator:
+        propertyName: type
+      properties:
+        type: { type: string, enum: [reading, snapshot, heartbeat] }
+        data: { type: object, additionalProperties: true }
+
+    WSCommandLiveMessage:
+      type: object
+      required: [type, data]
+      discriminator:
+        propertyName: type
+      properties:
+        type: { type: string, enum: [current, transition] }
+        data: { type: object, additionalProperties: true }
 
     Health:
       type: object
@@ -286,8 +311,8 @@ paths:
   /auth/logout:
     post:
       tags: [auth]
-      summary: Logout (no-op in MVP)
-      security: [{ bearerAuth: [] }]
+      summary: Logout (no-op in MVP — no auth required)
+      security: []
       responses:
         "204": { description: No content }
 
@@ -504,11 +529,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EdgeConfig" }
 
-  # Health
+  # Health (note: paths are auto-prefixed with /api/v1 by the server URL above)
   /health:
     get:
       tags: [health]
-      summary: Liveness probe (unauthenticated)
+      summary: Liveness probe (unauthenticated; resolves to /api/v1/health)
+      security: []
       responses:
         "200":
           description: OK

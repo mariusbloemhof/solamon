@@ -449,25 +449,26 @@ No Redis in MVP — single FastAPI process subscribes to MQTT and forwards to pe
                               │
                               ▼
         ┌──────────── pending ─────────────┐
-        │ FastAPI: validate, persist,       │
-        │ publish to MQTT, update sent_at   │
+        │ FastAPI: validate, persist;       │
+        │ MQTT publish with bounded retry  │
         └──────────────────┬────────────────┘
                            ▼
-        ┌──────────── sent ────────────────┐
-        │ Pi receives via paho-mqtt        │
+        ┌──────────── sent ────────────────┐    ┌── expired ────┐
+        │ Broker accepted PUBACK;          │    │ TTL exceeded  │
+        │ Pi receives via paho-mqtt;       │    │ (5 min);      │
+        │ validates against profile;       │    │ cloud reaps   │
+        │ Modbus FC06 write + read-back    │    └───────────────┘
         └──────────────────┬───────────────┘
-                           ▼
-        ┌──── acknowledged ─────────────┐    ┌──── failed ───┐
-        │ Pi: validate against profile, │    │ Modbus write  │
-        │ Modbus FC06 write             │    │ failed; ack   │
-        └──────────────────┬────────────┘    │ with reason   │
-                           ▼                  └───────────────┘
-        ┌──── confirmed ────────────────┐    ┌── expired ────┐
-        │ Pi: read back, value matches, │    │ TTL exceeded  │
-        │ ack with confirmed_value      │    │ (5 min);      │
-        └───────────────────────────────┘    │ cloud reaps   │
-                                              └───────────────┘
+                           │
+              ┌────────────┴───────────┐
+              ▼                        ▼
+    ┌──── confirmed ────┐    ┌──── failed ────────┐
+    │ Read-back matches │    │ Modbus write or    │
+    │ intended value    │    │ read-back failed   │
+    └───────────────────┘    └────────────────────┘
 ```
+
+The intermediate `acknowledged` state from earlier drafts was dropped — Pi publishes only terminal acks (`confirmed` / `failed`); the operator UI shows `sent` for the ~1-2 s of validation + Modbus + read-back. **Late-ack handling:** if a `confirmed` ack arrives after the cloud has marked the command `expired`, the audit log captures it (action `command.late_ack`) but the status doesn't revert. Operator manually reconciles via the audit trail. See [`docs/specs/cloud/control-relay.md`](docs/specs/cloud/control-relay.md) §1.1.
 
 Every transition writes an `AuditEntry` row. Browser subscribes to `/commands/{id}/live` and re-renders on each transition.
 

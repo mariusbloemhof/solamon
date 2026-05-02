@@ -91,15 +91,18 @@ Connection options match `mqtt-contracts.md` §10: keepalive 60 s, clean session
 - `device_id` in payload === device_id derived from topic. Same.
 - The `(site_slug, device_id)` pair exists in `app.site` joined to `app.device`. Unknown → reject + log to `solamon/_deadletter/unknown-device` (operator alert: device might have been deleted while a Pi is still publishing).
 
-### 3.2 Per-reading validation
+### 3.2 Per-reading validation and routing
 
 For each `(logical_metric_key, value)` in `readings`:
 
 - `logical_metric_key` exists in `app.logical_metric`. Unknown → drop the reading (don't fail the whole message); log warning.
-- For numeric metrics: `value` is a JSON number. Type mismatch → drop reading; log warning.
-- For enum metrics: `value` is the string symbolic form OR the integer code; coerce to the canonical form (string).
-- For datetime metrics: `value` is an RFC 3339 string; parse → store as datetime.
-- Value falls in the catalog's `expected_range`. Outside → still insert, but flag `quality=uncertain` for that reading. Hard `bad` quality only when decoding failed (which the edge agent handles before publishing).
+- **Routing decision based on `data_type`:**
+  - **Numeric** (`float`, `int`) → both `timeseries.reading` AND `app.device_snapshot.metrics`.
+  - **Non-numeric** (`enum`, `datetime`, `string`, `bool`, `bitfield`) → `app.device_snapshot.metrics` ONLY. The hypertable's `value DOUBLE PRECISION` column can't hold these. Non-numeric metrics are config-like (read at startup or hourly, not at the 10 s telemetry cadence) so a hypertable is the wrong storage anyway.
+- For numeric: `value` is a JSON number. Type mismatch → drop reading; log warning.
+- For enum metrics: `value` is the string symbolic form OR the integer code; coerce to the canonical form (string per JSON / catalog enum_values requirement).
+- For datetime metrics: `value` is an RFC 3339 string; parse → store as datetime in JSONB.
+- Numeric value falls in the catalog's `expected_range`. Outside → still insert, but flag `quality=uncertain` for that reading. Hard `bad` quality only when decoding failed (which the edge agent handles before publishing).
 
 ### 3.3 Dead-letter strategy
 
@@ -107,20 +110,22 @@ Failed messages are republished to `solamon/_deadletter/<reason>/<original-topic
 
 ## 4. Insert path
 
-### 4.1 Batched inserts
+### 4.1 Batched inserts (numeric metrics)
 
-Per-message: one batch INSERT for all readings in the message (typically 5-30 readings per message). Use Postgres `INSERT ... VALUES (...), (...), (...) ON CONFLICT DO NOTHING`.
+Per-message: one batch INSERT for **numeric** readings only (typically 5-30 readings per message). Use Postgres `INSERT ... VALUES (...), (...), (...) ON CONFLICT DO NOTHING`.
 
 ```sql
 INSERT INTO timeseries.reading
-  (time, device_id, logical_metric_key, value, raw_value, quality, block_name)
+  (time, device_id, logical_metric_key, value, raw_value, quality, block_name, received_at)
 VALUES
-  ($1, $2, 'frequency_hz',         50.02, NULL, 'good', 'realtime'),
-  ($1, $2, 'voltage_l1_n',        231.40, NULL, 'good', 'realtime'),
-  ($1, $2, 'active_power_total',   12.35, NULL, 'good', 'realtime')
+  ($1, $2, 'frequency_hz',         50.02, NULL, 'good', 'realtime', now()),
+  ($1, $2, 'voltage_l1_n',        231.40, NULL, 'good', 'realtime', now()),
+  ($1, $2, 'active_power_total',   12.35, NULL, 'good', 'realtime', now())
   -- ...
 ON CONFLICT (time, device_id, logical_metric_key) DO NOTHING;
 ```
+
+Non-numeric metrics in the same message are excluded from this INSERT; they go to the snapshot upsert below only.
 
 ### 4.2 Idempotency / dedup
 
@@ -133,7 +138,7 @@ The unique constraint on `(time, device_id, logical_metric_key)` ensures duplica
 
 ### 4.3 Snapshot upsert
 
-In the same DB transaction as the readings insert:
+In the same DB transaction as the readings insert. **All metrics in the message** (numeric AND non-numeric) get merged into the snapshot's `metrics` JSONB:
 
 ```sql
 INSERT INTO app.device_snapshot (device_id, snapshot_time, metrics)
@@ -141,23 +146,51 @@ VALUES ($1, $2, $3)
 ON CONFLICT (device_id) DO UPDATE
   SET snapshot_time = EXCLUDED.snapshot_time,
       metrics = app.device_snapshot.metrics || EXCLUDED.metrics
-  WHERE EXCLUDED.snapshot_time > app.device_snapshot.snapshot_time;
+  WHERE EXCLUDED.snapshot_time >= app.device_snapshot.snapshot_time;
 ```
 
-The `WHERE` clause on the conflict is important: out-of-order replay (Pi pushes a buffered older reading after an already-received newer one) must not regress the snapshot to old data. The hypertable still gets the older row (history is preserved) but the snapshot only ever moves forward.
+The `WHERE EXCLUDED.snapshot_time >= existing` clause handles out-of-order replay (Pi pushes a buffered older reading after an already-received newer one) — the hypertable still gets the older row (history is preserved) but the snapshot only ever moves forward in time. **`>=` not `>`** is deliberate: two messages from different blocks arriving in the same millisecond would otherwise lose the second one's metric updates; the JSONB merge handles overlap correctly.
+
+**Snapshot time semantics:** `snapshot_time` reflects the most-recent message's timestamp, but individual metrics inside `metrics` may be older. For example, an `import_active_energy_kwh` from a 60 s `energy` message can be ~50 s older than `snapshot_time` set by a 10 s `realtime` message that arrived in between. The dashboard treats `snapshot_time` as "when we last heard from this device" rather than "when each metric was last sampled". Per-metric `last_updated_at` inside the JSONB is post-MVP polish.
+
+**Also updates `app.device.last_seen_at = msg.timestamp` and `app.device.status = 'online'` in the same transaction** — telemetry arrival is the source of truth for per-device liveness.
 
 ## 5. Heartbeat handler
 
-Simpler than telemetry. On a heartbeat message:
+Simpler than telemetry. **Heartbeats are per-Pi, not per-device** — they update `app.site.last_seen_at` only:
 
 ```sql
 UPDATE app.site SET last_seen_at = $timestamp WHERE slug = $slug;
-UPDATE app.device SET status = $status WHERE site_id = (SELECT id FROM app.site WHERE slug = $slug);
 ```
 
-(`status = 'online' | 'offline'` based on the heartbeat's status field.)
+Per-device `app.device.status` is NOT updated by heartbeat — it's updated by telemetry arrival (§4.3). This separation matters when [SOL-16](https://linear.app/solamon/issue/SOL-16) (multi-device-per-Pi) lands: a single Pi reports heartbeat for itself, but each device on its LAN gets its own `status` updated independently based on whether telemetry is flowing for that specific device.
 
-A periodic background task (every 5 min) marks sites with `last_seen_at < now() - 90 seconds` as offline — covers the case where the LWT didn't fire (e.g., the Pi's network silently dies without notifying the broker).
+LWT handling: when Mosquitto publishes the offline LWT (per [`mqtt-contracts.md`](mqtt-contracts.md) §5.2), the same handler runs — `last_seen_at` is updated to the broker-reported time and the operator UI sees the site as offline within seconds.
+
+### 5.1 Stale device detector
+
+A periodic background task (every 60 s) marks devices as `offline` when their telemetry has stopped:
+
+```sql
+UPDATE app.device
+   SET status = 'offline'
+ WHERE status = 'online'
+   AND last_seen_at < now() - INTERVAL '5 minutes';
+```
+
+5 minutes is generous — covers the slowest poll cadence (energy = 60 s; 5× headroom for transient drops). Tunable per device when SOL-16 brings heterogeneous cadences.
+
+### 5.2 Stale site detector
+
+Sister task, runs every 60 s:
+
+```sql
+UPDATE app.site
+   SET (any external "site is offline" signal — e.g. dashboard rendering) is read from this
+ WHERE last_seen_at < now() - INTERVAL '90 seconds';
+```
+
+(For MVP this is just a query the dashboard issues; no `app.site.status` column. Can be added when an explicit site-status flag becomes useful.)
 
 ## 6. WebSocket fan-out
 
@@ -187,6 +220,29 @@ For MVP single-process: zero coordination overhead. When we split ingestion to a
 | Bad payload | Logged to `dead_letter` table; flagged in operator UI; never retried. |
 | Unknown metric in catalog | Reading dropped with warning. Action: add the metric to `architecture/logical_metrics.yaml`, redeploy. |
 | Postgres FK violation (unknown `device_id` despite envelope check) | Race condition — device deleted between envelope check and insert. Logged; reading dropped. |
+
+## 11. Retention sweep task
+
+Daily at 03:00 site-local (UTC for MVP), a background task runs the cleanup queries from [`data-model.md`](data-model.md) §5:
+
+```python
+async def retention_sweep_task():
+    while not shutdown:
+        # Sleep until next 03:00 UTC
+        await asyncio.sleep(seconds_until_next_03_utc())
+        try:
+            deleted_dl = await db.execute(
+                "DELETE FROM app.dead_letter WHERE received_at < now() - INTERVAL '30 days'"
+            )
+            deleted_cmd = await db.execute(
+                "DELETE FROM app.control_command WHERE issued_at < now() - INTERVAL '3 years'"
+            )
+            log.info("retention_sweep", dead_letter_deleted=deleted_dl, commands_deleted=deleted_cmd)
+        except Exception as e:
+            log.error("retention_sweep_failed", error=str(e))
+```
+
+`pg_cron` would be more native but adds an extension dependency. App-level cron is sufficient at MVP scale; revisit when we go multi-tenant.
 
 ## 9. Acceptance criteria
 
