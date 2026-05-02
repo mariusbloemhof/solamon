@@ -1,0 +1,554 @@
+# Solamon — Logical Metric Catalog
+#
+# Vendor-agnostic catalog of every metric the platform recognises.
+# Device profiles (architecture/profiles/*.yaml) map logical metric names to physical registers.
+# Spec: docs/specs/device-library/logical-metric-catalog.md
+# Linear: SOL-20
+
+schema_version: "1.0"
+
+metrics:
+
+  # ─── Frequency ─────────────────────────────────────────────────────────────
+  frequency_hz:
+    label: Line frequency
+    unit: Hz
+    data_type: float
+    category: frequency
+    is_cumulative: false
+    expected_range: [45, 65]
+
+  # ─── Voltage ───────────────────────────────────────────────────────────────
+  voltage_l1_n:
+    label: Phase 1 voltage (L-N)
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 1000]
+
+  voltage_l2_n:
+    label: Phase 2 voltage (L-N)
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 1000]
+
+  voltage_l3_n:
+    label: Phase 3 voltage (L-N)
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 1000]
+
+  voltage_l1_l2:
+    label: Line voltage L1-L2
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 2000]
+
+  voltage_l2_l3:
+    label: Line voltage L2-L3
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 2000]
+
+  voltage_l3_l1:
+    label: Line voltage L3-L1
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 2000]
+
+  voltage_avg_phase:
+    label: Average phase voltage
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 1000]
+
+  voltage_avg_line:
+    label: Average line voltage
+    unit: V
+    data_type: float
+    category: voltage
+    is_cumulative: false
+    expected_range: [0, 2000]
+
+  # ─── Current ───────────────────────────────────────────────────────────────
+  current_l1:
+    label: Phase 1 current
+    unit: A
+    data_type: float
+    category: current
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  current_l2:
+    label: Phase 2 current
+    unit: A
+    data_type: float
+    category: current
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  current_l3:
+    label: Phase 3 current
+    unit: A
+    data_type: float
+    category: current
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  current_avg:
+    label: Average phase current
+    unit: A
+    data_type: float
+    category: current
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  current_neutral:
+    label: Neutral current
+    unit: A
+    data_type: float
+    category: current
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  # ─── Active power ──────────────────────────────────────────────────────────
+  active_power_total:
+    label: Total active power
+    unit: kW
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = consumption from grid; negative = export to grid"
+    expected_range: [-100000, 100000]
+
+  active_power_l1:
+    label: Phase 1 active power
+    unit: kW
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = consumption from grid; negative = export to grid"
+    expected_range: [-100000, 100000]
+
+  active_power_l2:
+    label: Phase 2 active power
+    unit: kW
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = consumption from grid; negative = export to grid"
+    expected_range: [-100000, 100000]
+
+  active_power_l3:
+    label: Phase 3 active power
+    unit: kW
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = consumption from grid; negative = export to grid"
+    expected_range: [-100000, 100000]
+
+  # ─── Reactive power ────────────────────────────────────────────────────────
+  reactive_power_total:
+    label: Total reactive power
+    unit: kvar
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = inductive (lagging); negative = capacitive (leading)"
+    expected_range: [-100000, 100000]
+
+  reactive_power_l1:
+    label: Phase 1 reactive power
+    unit: kvar
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = inductive (lagging); negative = capacitive (leading)"
+    expected_range: [-100000, 100000]
+
+  reactive_power_l2:
+    label: Phase 2 reactive power
+    unit: kvar
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = inductive (lagging); negative = capacitive (leading)"
+    expected_range: [-100000, 100000]
+
+  reactive_power_l3:
+    label: Phase 3 reactive power
+    unit: kvar
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = inductive (lagging); negative = capacitive (leading)"
+    expected_range: [-100000, 100000]
+
+  # ─── Apparent power ────────────────────────────────────────────────────────
+  apparent_power_total:
+    label: Total apparent power
+    unit: kVA
+    data_type: float
+    category: power
+    is_cumulative: false
+    expected_range: [0, 100000]
+
+  apparent_power_l1:
+    label: Phase 1 apparent power
+    unit: kVA
+    data_type: float
+    category: power
+    is_cumulative: false
+    expected_range: [0, 100000]
+
+  apparent_power_l2:
+    label: Phase 2 apparent power
+    unit: kVA
+    data_type: float
+    category: power
+    is_cumulative: false
+    expected_range: [0, 100000]
+
+  apparent_power_l3:
+    label: Phase 3 apparent power
+    unit: kVA
+    data_type: float
+    category: power
+    is_cumulative: false
+    expected_range: [0, 100000]
+
+  # ─── Power factor ──────────────────────────────────────────────────────────
+  power_factor_l1:
+    label: Phase 1 power factor
+    unit: ""
+    data_type: float
+    category: power_factor
+    is_cumulative: false
+    direction_convention: "positive = lagging; negative = leading"
+    expected_range: [-1.0, 1.0]
+
+  power_factor_l2:
+    label: Phase 2 power factor
+    unit: ""
+    data_type: float
+    category: power_factor
+    is_cumulative: false
+    direction_convention: "positive = lagging; negative = leading"
+    expected_range: [-1.0, 1.0]
+
+  power_factor_l3:
+    label: Phase 3 power factor
+    unit: ""
+    data_type: float
+    category: power_factor
+    is_cumulative: false
+    direction_convention: "positive = lagging; negative = leading"
+    expected_range: [-1.0, 1.0]
+
+  power_factor_total:
+    label: Total system power factor
+    unit: ""
+    data_type: float
+    category: power_factor
+    is_cumulative: false
+    direction_convention: "positive = lagging; negative = leading"
+    expected_range: [-1.0, 1.0]
+
+  # ─── Energy (cumulative, monotonic) ────────────────────────────────────────
+  import_active_energy_kwh:
+    label: Imported active energy
+    unit: kWh
+    data_type: float
+    category: energy
+    is_cumulative: true
+    monotonic: true
+    expected_range: [0, 1.0e+12]
+
+  export_active_energy_kwh:
+    label: Exported active energy
+    unit: kWh
+    data_type: float
+    category: energy
+    is_cumulative: true
+    monotonic: true
+    expected_range: [0, 1.0e+12]
+
+  import_reactive_energy_kvarh:
+    label: Imported reactive energy
+    unit: kvarh
+    data_type: float
+    category: energy
+    is_cumulative: true
+    monotonic: true
+    expected_range: [0, 1.0e+12]
+
+  export_reactive_energy_kvarh:
+    label: Exported reactive energy
+    unit: kvarh
+    data_type: float
+    category: energy
+    is_cumulative: true
+    monotonic: true
+    expected_range: [0, 1.0e+12]
+
+  apparent_energy_kvah:
+    label: Apparent energy
+    unit: kVAh
+    data_type: float
+    category: energy
+    is_cumulative: true
+    monotonic: true
+    expected_range: [0, 1.0e+12]
+
+  # ─── Demand ────────────────────────────────────────────────────────────────
+  active_power_demand:
+    label: Active power demand
+    unit: kW
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [-100000, 100000]
+
+  apparent_power_demand:
+    label: Apparent power demand
+    unit: kVA
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [0, 100000]
+
+  reactive_power_demand:
+    label: Reactive power demand
+    unit: kvar
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [-100000, 100000]
+
+  current_demand_l1:
+    label: Phase 1 current demand
+    unit: A
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  current_demand_l2:
+    label: Phase 2 current demand
+    unit: A
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  current_demand_l3:
+    label: Phase 3 current demand
+    unit: A
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [0, 50000]
+
+  active_power_demand_max:
+    label: Peak active power demand this period
+    unit: kW
+    data_type: float
+    category: demand
+    is_cumulative: false
+    expected_range: [-100000, 100000]
+
+  active_power_demand_max_timestamp:
+    label: Time of peak active power demand
+    unit: ""
+    data_type: datetime
+    category: demand
+    is_cumulative: false
+
+  # ─── Power quality ─────────────────────────────────────────────────────────
+  voltage_unbalance_pct:
+    label: Voltage unbalance
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  current_unbalance_pct:
+    label: Current unbalance
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  thd_voltage_l1:
+    label: THD voltage phase 1
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  thd_voltage_l2:
+    label: THD voltage phase 2
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  thd_voltage_l3:
+    label: THD voltage phase 3
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  thd_current_l1:
+    label: THD current phase 1
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  thd_current_l2:
+    label: THD current phase 2
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  thd_current_l3:
+    label: THD current phase 3
+    unit: "%"
+    data_type: float
+    category: quality
+    is_cumulative: false
+    expected_range: [0, 100]
+
+  load_type:
+    label: Load type
+    unit: ""
+    data_type: enum
+    category: quality
+    is_cumulative: false
+    enum_values:
+      76: inductive
+      67: capacitive
+      82: resistive
+
+  # ─── Configuration (read on startup, hourly thereafter) ────────────────────
+  voltage_wiring_type:
+    label: Voltage wiring type
+    unit: ""
+    data_type: enum
+    category: configuration
+    is_cumulative: false
+    enum_values:
+      0: 3LN
+      1: 3LL
+      2: 2LL
+      3: 1LN
+      4: 1LL
+
+  current_wiring_type:
+    label: Current wiring type
+    unit: ""
+    data_type: enum
+    category: configuration
+    is_cumulative: false
+    enum_values:
+      0: 3CT
+      1: 2CT
+      2: 1CT
+
+  pt_ratio_primary:
+    label: PT primary side voltage
+    unit: V
+    data_type: float
+    category: configuration
+    is_cumulative: false
+    expected_range: [50, 1000000]
+
+  pt_ratio_secondary:
+    label: PT secondary side voltage
+    unit: V
+    data_type: float
+    category: configuration
+    is_cumulative: false
+    expected_range: [50, 400]
+
+  ct_ratio_primary:
+    label: CT primary side current
+    unit: A
+    data_type: int
+    category: configuration
+    is_cumulative: false
+    expected_range: [1, 50000]
+
+  ct_ratio_secondary:
+    label: CT secondary side current
+    unit: ""
+    data_type: int
+    category: configuration
+    is_cumulative: false
+    expected_range: [1, 333]
+
+  meter_clock:
+    label: Meter internal clock
+    unit: ""
+    data_type: datetime
+    category: configuration
+    is_cumulative: false
+
+  # ─── Control (writable) ────────────────────────────────────────────────────
+  demand_window_minutes:
+    label: Demand integration window
+    unit: min
+    data_type: int
+    category: control
+    is_cumulative: false
+    is_writable: true
+    allowed_values: [1, 5, 10, 15, 30]
+    expected_range: [1, 30]
+
+  # ─── Edge-derived (published by edge agent itself, not from device) ────────
+  edge_modbus_errors_per_minute:
+    label: Edge Modbus error rate (rolling 1 min)
+    unit: ""
+    data_type: float
+    category: derived
+    is_cumulative: false
+    expected_range: [0, 60]
+
+  edge_buffer_depth_seconds:
+    label: Edge local buffer depth (oldest unpublished reading age)
+    unit: s
+    data_type: int
+    category: derived
+    is_cumulative: false
+    expected_range: [0, 86400]
+
+  edge_last_successful_read:
+    label: Time of last successful Modbus read
+    unit: ""
+    data_type: datetime
+    category: derived
+    is_cumulative: false

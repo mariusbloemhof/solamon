@@ -1,0 +1,160 @@
+# Solamon — Device Profile — AccuEnergy Acuvim L
+#
+# Spec: docs/specs/device-library/acuvim-l-profile.md
+# Source: discovery/specs/acuvim_l_modbus_registers.md (Acuvim-L user manual V2.0.3, December 2025)
+# Linear: SOL-20
+#
+# Open empirical question (resolved on bench Day 3 via solamon-probe):
+#   Johan reports the 0x4000 block (Acuvim II address space) reads on his Acuvim L meters.
+#   AccuEnergy docs disagree. This profile commits to the documented 0x0600 block.
+#   See acuvim-l-profile.md §7 for the bench test plan.
+
+schema_version: "1.0"
+
+device:
+  manufacturer: AccuEnergy
+  model: Acuvim L
+  category: meter
+
+connection:
+  protocol: modbus_tcp
+  default_port: 502
+  default_unit_id: 1
+
+# ─── Fingerprint — negative SunSpec + positive capability probes ─────────────
+# Acuvim L exposes NO identity registers on the wire. We use:
+#   1. Negative read of the SunSpec block at 0xC350 (which exists on Acuvim II but not L)
+#   2. Positive read of the secondary frequency register
+#   3. Positive read of the comms address echo
+fingerprint:
+  reads:
+    - address: 0xC350
+      length: 2
+      expect_exception: 2     # illegal data address
+    - address: 0x0130
+      length: 1
+      format: uint16
+      expected_range: [4500, 6500]   # 45.00–65.00 Hz (raw × 100)
+    - address: 0x0101
+      length: 1
+      format: uint16
+      expected_range: [1, 247]       # Modbus slave address range
+  identifiers: []   # No identifier registers; capture serial/firmware/sub-variant from device label at commissioning
+
+# ─── Read blocks ─────────────────────────────────────────────────────────────
+read_blocks:
+
+  # 5.1 — Realtime measurements (74 regs, Float32 BE, no scaling) — every 10 s
+  - name: realtime
+    fc: 3
+    address: 0x0600
+    length: 74
+    cadence_s: 10
+    metrics:
+      - { logical: frequency_hz,         offset: 0,   format: float32_be }
+      - { logical: voltage_l1_n,         offset: 4,   format: float32_be }
+      - { logical: voltage_l2_n,         offset: 8,   format: float32_be }
+      - { logical: voltage_l3_n,         offset: 12,  format: float32_be }
+      - { logical: voltage_l1_l2,        offset: 16,  format: float32_be }
+      - { logical: voltage_l2_l3,        offset: 20,  format: float32_be }
+      - { logical: voltage_l3_l1,        offset: 24,  format: float32_be }
+      - { logical: current_l1,           offset: 28,  format: float32_be }
+      - { logical: current_l2,           offset: 32,  format: float32_be }
+      - { logical: current_l3,           offset: 36,  format: float32_be }
+      - { logical: current_neutral,      offset: 40,  format: float32_be }
+      - { logical: active_power_l1,      offset: 44,  format: float32_be }
+      - { logical: active_power_l2,      offset: 48,  format: float32_be }
+      - { logical: active_power_l3,      offset: 52,  format: float32_be }
+      - { logical: active_power_total,   offset: 56,  format: float32_be }
+      - { logical: reactive_power_l1,    offset: 60,  format: float32_be }
+      - { logical: reactive_power_l2,    offset: 64,  format: float32_be }
+      - { logical: reactive_power_l3,    offset: 68,  format: float32_be }
+      - { logical: reactive_power_total, offset: 72,  format: float32_be }
+      - { logical: apparent_power_total, offset: 76,  format: float32_be }
+      - { logical: power_factor_l1,      offset: 80,  format: float32_be }
+      - { logical: power_factor_l2,      offset: 84,  format: float32_be }
+      - { logical: power_factor_l3,      offset: 88,  format: float32_be }
+      - { logical: power_factor_total,   offset: 92,  format: float32_be }
+      - { logical: voltage_unbalance_pct,offset: 96,  format: float32_be }
+      - { logical: current_unbalance_pct,offset: 100, format: float32_be }
+      - { logical: apparent_power_l1,    offset: 108, format: float32_be }
+      - { logical: apparent_power_l2,    offset: 112, format: float32_be }
+      - { logical: apparent_power_l3,    offset: 116, format: float32_be }
+      - { logical: apparent_power_demand,offset: 124, format: float32_be }
+      - { logical: active_power_demand,  offset: 128, format: float32_be }
+      - { logical: reactive_power_demand,offset: 132, format: float32_be }
+      - { logical: current_demand_l1,    offset: 136, format: float32_be }
+      - { logical: current_demand_l2,    offset: 140, format: float32_be }
+      - { logical: current_demand_l3,    offset: 144, format: float32_be }
+
+  # 5.2 — Energy counters (Dword, scaled ×0.1 = kWh/kvarh/kVAh) — every 60 s
+  - name: energy
+    fc: 3
+    address: 0x0156
+    length: 10
+    cadence_s: 60
+    metrics:
+      - { logical: import_active_energy_kwh,     offset: 0,  format: dword_high_first, scale: 0.1 }
+      - { logical: export_active_energy_kwh,     offset: 4,  format: dword_high_first, scale: 0.1 }
+      - { logical: import_reactive_energy_kvarh, offset: 8,  format: dword_high_first, scale: 0.1 }
+      - { logical: export_reactive_energy_kvarh, offset: 12, format: dword_high_first, scale: 0.1 }
+      - { logical: apparent_energy_kvah,         offset: 16, format: dword_high_first, scale: 0.1 }
+
+  # 5.3 — Power quality / THD totals (Word, scaled ×0.01 = %) — every 60 s
+  - name: power_quality
+    fc: 3
+    address: 0x0400
+    length: 6
+    cadence_s: 60
+    metrics:
+      - { logical: thd_voltage_l1, offset: 0,  format: uint16, scale: 0.01 }
+      - { logical: thd_voltage_l2, offset: 2,  format: uint16, scale: 0.01 }
+      - { logical: thd_voltage_l3, offset: 4,  format: uint16, scale: 0.01 }
+      - { logical: thd_current_l1, offset: 6,  format: uint16, scale: 0.01 }
+      - { logical: thd_current_l2, offset: 8,  format: uint16, scale: 0.01 }
+      - { logical: thd_current_l3, offset: 10, format: uint16, scale: 0.01 }
+
+  # 5.4 — Peak demand (Dword + timestamp; MVP reads value only) — every 300 s
+  - name: peak_demand
+    fc: 3
+    address: 0x1024
+    length: 4
+    cadence_s: 300
+    metrics:
+      - { logical: active_power_demand_max, offset: 0, format: dword_high_first, scale: 1.0 }
+
+  # 5.5 — Meter clock (custom decoder; 7 uint16s → datetime) — every 3600 s
+  - name: clock
+    fc: 3
+    address: 0x0184
+    length: 7
+    cadence_s: 3600
+    metrics:
+      - { logical: meter_clock, offset: 0, format: acuvim_clock }
+
+  # 5.6 — Configuration (mixed; read at startup + hourly) — every 3600 s
+  - name: config
+    fc: 3
+    address: 0x0103
+    length: 7
+    cadence_s: 3600
+    metrics:
+      - { logical: voltage_wiring_type,  offset: 0,  format: uint16 }
+      - { logical: current_wiring_type,  offset: 2,  format: uint16 }
+      - { logical: pt_ratio_primary,     offset: 4,  format: dword_high_first, scale: 0.1 }
+      - { logical: pt_ratio_secondary,   offset: 8,  format: uint16, scale: 0.1 }
+      - { logical: ct_ratio_primary,     offset: 10, format: uint16, scale: 1.0 }
+      - { logical: ct_ratio_secondary,   offset: 12, format: uint16, scale: 1.0 }
+
+# ─── Control register — demand integration window ───────────────────────────
+control:
+  demand_window_minutes:
+    fc: 6
+    address: 0x010C
+    format: word
+    allowed_values: [1, 5, 10, 15, 30]
+    readback_register:
+      address: 0x010C
+      offset: 0
+      format: word
+    readback_delay_ms: 500
