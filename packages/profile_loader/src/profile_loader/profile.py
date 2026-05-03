@@ -155,6 +155,27 @@ class Profile:
             result[metric.logical] = Reading(value=value, raw_value=raw, quality=quality)
         return result
 
+    def validate_control(self, logical_metric: str, value: Any, catalog: Any) -> None:
+        """Validates a control command. Raises ValidationError on bad input.
+
+        Spec: profile-schema.md §7.1
+        """
+        cm = catalog.get(logical_metric)
+        if cm is None:
+            raise ValidationError(f"unknown metric: {logical_metric}")
+        if not cm.is_writable:
+            raise ValidationError(f"metric '{logical_metric}' is not writable in catalog")
+        if logical_metric not in self.control:
+            raise ValidationError(
+                f"metric '{logical_metric}' is not exposed for control by this profile"
+            )
+        spec = self.control[logical_metric]
+        allowed = spec.allowed_values if spec.allowed_values is not None else cm.allowed_values
+        if allowed is not None and value not in allowed:
+            raise ValidationError(
+                f"value {value!r} not in allowed values {allowed} for '{logical_metric}'"
+            )
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Profile:
         device = DeviceInfo(**raw["device"])
