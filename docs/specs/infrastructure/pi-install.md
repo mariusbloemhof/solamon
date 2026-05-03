@@ -15,25 +15,39 @@ This is the procedure a human (Marius, Johan, or a future contractor) follows at
 1. **Hardware:** Pi 5 (8 GB RAM recommended), 32+ GB SD card, USB-C PSU, USB LTE modem (or Ethernet to local router with internet), small Ethernet switch, Ethernet cable.
 2. **Image the SD card** with **Raspberry Pi OS Lite (64-bit)** using Raspberry Pi Imager.
    - In Imager, click the gear icon: set hostname (`solamon-pi-{slug}`), enable SSH, set the `pi` user password, configure WiFi (if Pi will WiFi temporarily during install), set locale + timezone (UTC for the project — Pi clock stays UTC).
-3. **Boot the Pi** with the SD card. Connect to the LAN where the Acuvim is reachable.
-4. **From your laptop on the same LAN**: `ssh pi@solamon-pi-{slug}.local` (mDNS).
-5. **Run the install script:**
+   - **Add Marius's SSH public key** to the `~/.ssh/authorized_keys` slot in Imager's "set username + password" pane (paste the key after the password). This is the OpenSSH belt-and-braces fallback referenced in [`tailscale.md`](tailscale.md) §6 — recovery path if Tailscale SSH ever has a hiccup. Without this, recovery requires either physical SD card access or the Pi-Imager-set password (which is hard-to-rotate).
+3. **Confirm the Acuvim's IP on the site LAN** before running the install script. The script's `--device-host` defaults to `192.168.1.254` (the Acuvim factory default). Many sites have non-default LAN ranges (`10.0.0.x`, `172.16.x.x`, etc.) — run `nmap -p 502 192.168.1.0/24` or check the site's router DHCP table to find the meter, then pass the actual IP via `--device-host`. Wrong default → install completes but agent never reads the meter.
+4. **Boot the Pi** with the SD card. Connect to the LAN where the Acuvim is reachable.
+5. **From your laptop on the same LAN**: `ssh pi@solamon-pi-{slug}.local` (mDNS).
+6. **Run the install script.** **Do NOT pass secrets on the command line** — they leak to `ps -ef` and `~/.bash_history`. Drop them in a temp config file first:
+
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/mariusbloemhof/solamon/master/docs/specs/infrastructure/scripts/solamon-edge-install.sh | sudo bash -s -- \
-       --site-slug "johansworkbench" \
-       --cloud-url "https://cloud.solamon.bloemhof.dev" \
-       --bearer-token "<the per-site secret from cloud admin>" \
-       --tailscale-auth-key "tskey-auth-..." \
-       --ecr-access-key-id "AKIA..." \
-       --ecr-secret-access-key "..."
+   # On the Pi:
+   sudo tee /tmp/install-config.yaml <<EOF
+   site_slug: johansworkbench
+   cloud_url: https://cloud.solamon.bloemhof.dev
+   bearer_token: <the per-site secret from cloud admin>
+   tailscale_auth_key: tskey-auth-...
+   ecr_access_key_id: AKIA...
+   ecr_secret_access_key: ...
+   device_host: 192.168.20.10           # whatever the Acuvim's actual IP is
+   EOF
+   sudo chmod 600 /tmp/install-config.yaml
+
+   curl -fsSL https://raw.githubusercontent.com/mariusbloemhof/solamon/master/docs/specs/infrastructure/scripts/solamon-edge-install.sh \
+     | sudo bash -s -- --config /tmp/install-config.yaml
+
+   # The script `shred`s the config at exit (success or fail). Do NOT keep it.
    ```
-   *(All argument values come from the cloud admin's prep-this-site procedure — see [`cloud-bootstrap.md`](cloud-bootstrap.md) §10.)*
+   *(All values come from the cloud admin's prep-this-site procedure — see [`cloud-bootstrap.md`](cloud-bootstrap.md) §10.)*
 
-6. **Wait for the script to finish** (~10 minutes). It prints status as it goes; final line is `✓ Edge agent ready` or an error.
+   The install script also accepts the legacy `--site-slug ... --bearer-token ...` argv form for CI / scripted use; that form is documented but discouraged for human operator use precisely because of the argv-leak issue.
 
-7. **Verify on the cloud**: open the dashboard, navigate to the site, confirm the heartbeat appears within 90 s.
+7. **Wait for the script to finish** (~10 minutes). It prints status as it goes; final line is `✓ Edge agent ready` or an error.
 
-8. **Power-cycle test:** unplug the Pi for 30 s, replug. Heartbeat should resume within 2 minutes (NTP sync + Docker startup + agent connect). Done.
+8. **Verify on the cloud**: open the dashboard, navigate to the site, confirm the heartbeat appears within 90 s.
+
+9. **Power-cycle test:** unplug the Pi for 30 s, replug. Heartbeat should resume within 2 minutes (NTP sync + Docker startup + agent connect). Done.
 
 ## 2. Script inputs
 
@@ -66,7 +80,7 @@ The script is `set -euo pipefail`. Every step logs `[1/N] Doing X...` and `✓` 
 
 ### 3.2 NTP sync (step 4)
 
-5. **Verify time-sync.** `timedatectl show -p NTPSynchronized --value` should be `yes`. If not, wait up to 2 minutes for the systemd-timesyncd to sync. If still not synced, exit 1 — the agent's UTC timestamps depend on this.
+5. **Verify time-sync.** `timedatectl show -p NTPSynchronized --value` should be `yes`. If not, poll for up to **5 minutes** (60 attempts × 5 s). On marginal LTE first-boot, DNS + first NTP can take 3+ minutes; the earlier 2-minute timeout was tight. Still not synced after 5 minutes → exit 1 with a hint to check the Pi's network connectivity.
 
 ### 3.3 Install Docker (steps 5-6)
 
@@ -82,8 +96,16 @@ The script is `set -euo pipefail`. Every step logs `[1/N] Doing X...` and `✓` 
 ### 3.5 ECR login (step 10)
 
 11. **Configure AWS credentials** in `/etc/solamon/aws-credentials` (mode 600, owner solamon:solamon). Standard `~/.aws/credentials` format with profile `solamon-pi`.
-12. **Install AWS CLI** if not present (`apt-get install awscli`).
-13. **Login Docker to ECR**: `aws --profile solamon-pi ecr get-login-password --region af-south-1 | docker login --username AWS --password-stdin {ECR_URL}`. Works for 12 hours; refreshed via cron (step 16 below).
+12. **Install AWS CLI v2.** Use the official ARM64 installer, NOT `apt-get install awscli` (which ships v1; AWS announced v1 EOL for new deployments):
+
+    ```bash
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp/
+    /tmp/aws/install --update
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+    ```
+
+13. **Login Docker to ECR**: discover the AWS account ID via `aws sts get-caller-identity --query Account --output text`. **Validate the result** — if AWS returns empty (transient API blip), the next `docker login` invocation gets a malformed registry URL like `.dkr.ecr.af-south-1.amazonaws.com` and fails confusingly. Then `aws --profile solamon-pi ecr get-login-password --region af-south-1 | docker login --username AWS --password-stdin {ECR_URL}`. Works for 12 hours; refreshed via cron (step 16 below).
 
 ### 3.6 Edge agent deploy (steps 11-14)
 
@@ -103,7 +125,32 @@ The script is `set -euo pipefail`. Every step logs `[1/N] Doing X...` and `✓` 
 
 ### 3.7 Cron for ECR auth refresh (step 15)
 
-20. **Install a cron job** that refreshes the ECR docker-login every 6 hours (well within the 12-hour token lifetime). Owner: root. Logs to `/var/log/solamon-ecr-refresh.log`.
+20. **Install a cron job** that refreshes the ECR docker-login every 6 hours (well within the 12-hour token lifetime). Owner: root. Logs to `/var/log/solamon-ecr-refresh.log`. The cron line **must explicitly set `PATH`** — default cron PATH is `/usr/bin:/bin` and AWS CLI v2 installs to `/usr/local/bin/aws`:
+
+    ```cron
+    PATH=/usr/local/bin:/usr/bin:/bin
+    AWS_SHARED_CREDENTIALS_FILE=/etc/solamon/aws-credentials
+    AWS_PROFILE=solamon-pi
+    0 */6 * * * root aws ecr get-login-password --region af-south-1 | docker login --username AWS --password-stdin {ECR_URL} >> /var/log/solamon-ecr-refresh.log 2>&1
+    ```
+
+### 3.7.1 Host firewall (step 15.5)
+
+21. **Configure `ufw`** so only the LAN-facing services and Tailscale are reachable:
+
+    ```bash
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow ssh                            # OpenSSH fallback (LAN)
+    ufw allow in on tailscale0               # Tailscale management surface
+    ufw --force enable
+    ```
+
+    With `network_mode: host` on the agent container, anything the agent listens on would otherwise be exposed to the LAN — `ufw default deny incoming` blocks that. The agent doesn't bind any inbound ports in MVP, but the rule is defensive. Tailscale's interface (`tailscale0`) is allowed in full so admin SSH + ad-hoc port-forward debugging work.
+
+### 3.7.2 Tailscale `up` is rerun-friendly without `--reset` (step 15.6)
+
+The bootstrap script's first run uses `tailscale up --ssh --auth-key=... --hostname=...` (no `--reset`). Re-running the install script on the same Pi re-up's with the same auth key (idempotent — Tailscale recognises the existing identity). **Don't pass `--reset`** — it discards operator customisations like `--accept-routes`, exit-node settings, custom DNS overrides between runs.
 
 ### 3.8 Verification (step 16)
 

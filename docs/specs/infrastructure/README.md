@@ -31,8 +31,9 @@ Each section's spec is self-contained and includes its own acceptance criteria.
 |------|-------------------|
 | [`README.md`](README.md) | This index + bring-up sequence. |
 | [`aws-account.md`](aws-account.md) | Greenfield AWS account setup, IAM, billing alerts, region config. |
+| [`aws-account-setup-checklist.md`](aws-account-setup-checklist.md) | Checklist of every manual AWS console step the install scripts assume is already done. Run before either bootstrap script. |
 | [`ecr-and-images.md`](ecr-and-images.md) | ECR Private repo for the edge-agent image; build + tag + push pipeline; Pi-side pull credentials. |
-| [`caddy-and-dns.md`](caddy-and-dns.md) | Domain/subdomain choice, DNS records, Caddy auto-TLS, reverse proxy to Next.js + FastAPI. Mosquitto's TLS is separate. |
+| [`caddy-and-dns.md`](caddy-and-dns.md) | Domain/subdomain choice, DNS records, Caddy auto-TLS, reverse proxy to Next.js + FastAPI. Mosquitto's TLS shares Caddy's certs. |
 | [`tailscale.md`](tailscale.md) | Tailnet, ACL JSON, MagicDNS, tags, ephemeral keys for the install script. |
 | [`pi-install.md`](pi-install.md) | The `solamon-edge-install.sh` script's contract: inputs, steps, idempotency, error handling, verification. |
 | [`cloud-bootstrap.md`](cloud-bootstrap.md) | The `solamon-cloud-bootstrap.sh` script's contract: from a fresh EC2 to running stack with verified `/api/v1/health` green. |

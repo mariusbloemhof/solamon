@@ -95,25 +95,67 @@ The contract for `solamon-cloud-bootstrap.sh` — the script that takes a fresh 
    - `JWT_SECRET` — 32-byte random for FastAPI's JWT signing
    - `NEXTAUTH_SECRET` — 32-byte random for NextAuth's cookie encryption
    - `DB_PASSWORD` — 24-char random Postgres superuser password
+   - `MQTT_CLOUD_PASSWORD` — 24-char random for the `solamon-cloud` MQTT user. **Distinct from `DB_PASSWORD`.** The cloud's MQTT credentials and Postgres credentials are independent; conflating them was a bug in the first draft of this script.
    - `ADMIN_PASSWORD` — 16-char random for the seed admin user (printed once at the end)
 10. Write `/opt/solamon/.env` (mode 600) with all secrets.
 11. **Render templates** (heredocs in the script — could be split out post-MVP):
     - `/opt/solamon/docker-compose.yml` — the cloud stack
     - `/opt/solamon/caddy/Caddyfile` — TLS reverse proxy (per [`caddy-and-dns.md`](caddy-and-dns.md) §3)
-    - `/opt/solamon/mosquitto/mosquitto.conf` — broker config (per [`../cloud/mqtt-contracts.md`](../cloud/mqtt-contracts.md))
-    - `/opt/solamon/mosquitto/passwords` — initially empty; populated when sites are added
-    - `/opt/solamon/mosquitto/acls` — initially restrictive; updated when sites are added
+    - `/opt/solamon/mosquitto/mosquitto.conf` — broker config (per [`../cloud/mqtt-contracts.md`](../cloud/mqtt-contracts.md) and [`caddy-and-dns.md`](caddy-and-dns.md) §6)
+    - `/opt/solamon/mosquitto/passwords` — populated with the `solamon-cloud` user via a one-shot `mosquitto_passwd` invocation (see step 11.1 below). Per-site users are added later by the cloud's site-add procedure (§10).
+    - `/opt/solamon/mosquitto/acls` — initial entries for `solamon-cloud` only; per-site entries appended at site-add time.
+    - `/etc/cron.d/solamon-mosquitto-cert-reload` — daily `SIGHUP` to Mosquitto to pick up Caddy-renewed certs (per `caddy-and-dns.md §6.1`).
+
+11.1. **Bootstrap the Mosquitto password file.** Mosquitto won't start without `password_file` populated (we set `allow_anonymous false`), and we can't `docker compose exec` into a container that hasn't started. Run a one-shot `mosquitto_passwd` against the host file before bringing the broker up:
+
+    ```bash
+    docker run --rm \
+        -v /opt/solamon/mosquitto:/mosquitto/config \
+        eclipse-mosquitto:2 \
+        mosquitto_passwd -b -c /mosquitto/config/passwords \
+            solamon-cloud "${MQTT_CLOUD_PASSWORD}"
+    chown 1883:1883 /opt/solamon/mosquitto/passwords /opt/solamon/mosquitto/acls
+    chmod 0640      /opt/solamon/mosquitto/passwords /opt/solamon/mosquitto/acls
+    ```
+
+    UID 1883 is the in-container `mosquitto` user; mode 0640 makes the file readable by that user when bind-mounted but not world-readable on the host.
+
 12. Open the EC2's local firewall (`ufw`) for 80, 443, 8883.
 
 ### 3.7 Database (steps 13-15)
 
 13. `docker compose up -d postgres` and wait for the health check to return `healthy` (Postgres + Timescale extension load takes ~20 s).
-14. **Run the migration:** `docker compose exec postgres psql -U solamon -d solamon -f /migrations/0001_initial.sql`. (The migration file is mounted from the cloud-app container's image — single source of truth, packaged at build time.)
-15. **Seed reference data:** run `docker compose exec app python -m solamon.seed_reference_data` (loads `architecture/logical_metrics.yaml` and `architecture/profiles/*.yaml` into the DB; creates the admin user with the generated password).
+14. **Run the migration:** the cloud-app image (per [`../cloud/Dockerfile.md`](../cloud/Dockerfile.md) — to be authored as a tracked SOL-21 follow-on) ships with `psql` installed and the `migrations/` directory copied in at `/app/migrations/`. The script invokes:
+
+    ```bash
+    docker compose run --rm app \
+        psql "host=postgres user=solamon password=${DB_PASSWORD} dbname=solamon" \
+        -f /app/migrations/0001_initial.sql
+    ```
+
+    Until the cloud-app Dockerfile spec lands, the script SHOULD copy migrations into the postgres container instead and run via `docker compose exec postgres psql -f /migrations/...`. Either path requires that the migration file actually exists somewhere mounted into a container — that mount is part of the Dockerfile contract.
+
+15. **Seed reference data:** `docker compose run --rm -e ADMIN_EMAIL=... -e ADMIN_PASSWORD=... app python -m solamon.seed_reference_data` (loads `architecture/logical_metrics.yaml` and `architecture/profiles/*.yaml` into the DB; creates the admin user with the generated password). Same Dockerfile dependency as step 14.
 
 ### 3.8 Application (step 16)
 
-16. `docker compose up -d` for the rest (mosquitto, caddy, app, web). Wait for `/api/v1/health` to return 200.
+16. **Wait for Caddy's first cert.** Mosquitto's TLS cert/key live inside Caddy's data volume (per [`caddy-and-dns.md`](caddy-and-dns.md) §6); Caddy provisions the cert ~10-30 s after first start. Bring up Caddy first, poll for the cert files, **then** bring up the rest of the stack (so Mosquitto doesn't restart-loop on startup):
+
+    ```bash
+    docker compose up -d caddy
+    # Poll the cert path inside the named volume
+    for i in $(seq 1 24); do
+        if docker run --rm -v solamon_caddy-data:/d alpine \
+            test -f "/d/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${DOMAIN}/${DOMAIN}.crt"; then
+            ok "Caddy cert provisioned"
+            break
+        fi
+        sleep 5
+    done
+    docker compose up -d                # mosquitto, app, web
+    ```
+
+    Then wait for `/api/v1/health` to return 200.
 
 ### 3.9 Verification (step 17)
 
@@ -157,9 +199,28 @@ For a clean re-install: `docker compose down -v && rm -rf /opt/solamon` first. *
 
 ## 5. Backup integration
 
-The script also installs a daily cron at 03:00 UTC that runs `pg_dump -Fc` and uploads to `s3://solamon-backup-prod/postgres/$(date +%F).dump`. Retention 30 days (handled by S3 lifecycle policy on the bucket).
+**Bucket pre-flight.** The script verifies `s3://${BACKUP_BUCKET}` (default `solamon-backup-prod`) exists with `aws s3api head-bucket`; if not, it exits with a hint to create it via `aws s3 mb s3://solamon-backup-prod --region af-south-1`. The bucket should have an S3 lifecycle policy deleting objects under `postgres/` after 30 days (configured manually per [`aws-account.md`](aws-account.md) §6.X).
 
-The script verifies the bucket exists; if not, exits with a hint to create it via `aws s3 mb s3://solamon-backup-prod --region af-south-1`.
+**Daily backup cron.** The script installs `/etc/cron.d/solamon-pg-backup` running at 03:00 UTC:
+
+```cron
+0 3 * * * root /opt/solamon/pg-backup.sh >> /var/log/solamon-pg-backup.log 2>&1
+```
+
+Where `/opt/solamon/pg-backup.sh` is written by the bootstrap script:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+DATE=$(date -u +%F)
+DUMP=/tmp/solamon-${DATE}.dump
+docker compose -f /opt/solamon/docker-compose.yml exec -T postgres \
+    pg_dump -U solamon -Fc -d solamon > "${DUMP}"
+aws s3 cp "${DUMP}" "s3://solamon-backup-prod/postgres/${DATE}.dump" --region af-south-1
+rm -f "${DUMP}"
+```
+
+The `pg_dump` runs against the live Postgres via the existing container — no separate Postgres install on the host. `pg_dump -Fc` (custom format) is what `pg_restore` consumes during DR (see §11).
 
 ## 6. Logs
 
@@ -205,11 +266,44 @@ When the project is wound down or the cloud is being moved to a new region/accou
 After the cloud is up, before the Pi can be installed:
 
 1. Sign in to the cloud web UI as `admin@solamon`.
-2. (Post-MVP UI: site-add page.) For MVP: use the API directly to insert a `app.site` row with name, slug, timezone, MQTT username, MQTT password.
-3. The cloud's site-add procedure regenerates `mosquitto/passwords` + `mosquitto/acls` (per [`../cloud/mqtt-contracts.md`](../cloud/mqtt-contracts.md) §9) and SIGHUPs the Mosquitto container.
+2. (Post-MVP UI: site-add page.) For MVP: use the API directly to insert an `app.site` row with name, slug, timezone, MQTT username, MQTT password.
+3. The cloud's site-add procedure runs the per-site Mosquitto registration (§10.1).
 4. The same site row's `mqtt_password` is the bearer token passed to `solamon-edge-install.sh` for that site.
 
 **MVP shortcut:** the seed script in step 15 of the bootstrap creates a single bench site with a generated password. The bootstrap output prints the bench's per-site bearer token alongside the admin password. The first Pi install uses these values directly.
+
+### 10.1 Site-add: Mosquitto password + ACL update
+
+When the cloud's site-add code path runs (whether via the seed script or the API endpoint that lands post-MVP), it MUST register the new site with Mosquitto. Concretely:
+
+```bash
+# 1. Add (or update) the per-site MQTT user.
+docker exec solamon-mosquitto \
+    mosquitto_passwd -b /mosquitto/config/passwords \
+        "solamon-${SITE_SLUG}" "${SITE_MQTT_PASSWORD}"
+
+# 2. Append the site's ACL block to /mosquitto/config/acls if not already present.
+#    The cloud regenerates the file from app.site rows on every site-add — this
+#    is idempotent and avoids drift between DB and broker.
+docker exec solamon-mosquitto \
+    sh -c "cat > /mosquitto/config/acls" <<EOF
+user solamon-cloud
+topic readwrite solamon/#
+
+$(while read -r slug; do
+    echo "user solamon-${slug}"
+    echo "topic readwrite solamon/${slug}/#"
+    echo
+done < <(psql ... -t -A -c "SELECT slug FROM app.site WHERE is_active"))
+EOF
+
+# 3. SIGHUP Mosquitto so it re-reads both files.
+docker kill -s HUP solamon-mosquitto
+```
+
+**Why SIGHUP works for both files in Mosquitto 2.x.** Mosquitto 2.0+ re-reads `password_file` and `acl_file` on SIGHUP (verified against the upstream changelog). Earlier 1.x versions only re-read ACLs — if we ever pin to 1.x, the password-add path would need a container restart instead. For MVP we're pinned to `eclipse-mosquitto:2`, so SIGHUP is correct.
+
+**Implementation note for the cloud app.** The site-add API endpoint (post-MVP — for MVP this is done by the seed script during bootstrap) needs Docker socket access OR a small helper container that does the `mosquitto_passwd` + SIGHUP work. For MVP single-site, the bootstrap script calls these directly and the cloud app never touches Mosquitto config files.
 
 ## 11. Disaster recovery — restore from backup
 
@@ -225,16 +319,33 @@ sudo /opt/solamon/solamon-cloud-bootstrap.sh \
     --restore-from "s3://solamon-backup-prod/postgres/2026-05-02.dump"
 ```
 
-The `--restore-from` flag, when present, **skips the migration + seed steps** (steps 14, 15) and instead runs:
+The `--restore-from` flag, when present, **skips the seed step (15)** but **NOT the migration replay**. The flow:
 
-1. `aws s3 cp ${RESTORE_S3_URI} /tmp/restore.dump`
+1. `aws s3 cp ${RESTORE_S3_URI} /tmp/restore.dump`.
 2. `docker compose up -d postgres` and wait for healthy.
 3. `docker compose exec postgres psql -U solamon -c "SELECT timescaledb_pre_restore();"` — required for Timescale (per [`../cloud/data-model.md`](../cloud/data-model.md) §8).
-4. `docker compose exec postgres pg_restore -d solamon /tmp/restore.dump`.
+4. `docker compose exec postgres pg_restore -U solamon -d solamon /tmp/restore.dump`.
 5. `docker compose exec postgres psql -U solamon -c "SELECT timescaledb_post_restore();"`.
-6. Resume normal bootstrap from step 16.
+6. **Replay any migrations newer than what the dump contained.** The dump preserves the `app.schema_migrations` table (per [`../cloud/migrations/0001_initial.sql`](../cloud/migrations/0001_initial.sql)). The script queries that table to determine the highest applied migration filename in the restored dump, then iterates over `migrations/*.sql` in lex order, applying any that aren't already in the table:
 
-The bench rehearsal Day 11-12 polish includes **a restore drill** to verify this procedure works end-to-end.
+    ```bash
+    APPLIED=$(docker compose exec -T postgres \
+        psql -U solamon -d solamon -t -A -c \
+        "SELECT filename FROM app.schema_migrations ORDER BY filename;")
+    for migration in /app/migrations/[0-9]*.sql; do
+        name=$(basename "${migration}")
+        if ! grep -qx "${name}" <<< "${APPLIED}"; then
+            echo "Applying migration ${name} (post-restore catch-up)"
+            docker compose run --rm app psql "..." -f "${migration}"
+        fi
+    done
+    ```
+
+    Without this step, a dump captured at schema 0001 restored into a stack expecting 0002 would silently leave the schema lagging — an early MVP misfeature where the app then fails to start with cryptic "column does not exist" errors.
+
+7. Resume normal bootstrap from step 16.
+
+The bench rehearsal Day 11-12 polish includes **a restore drill** to verify this procedure works end-to-end, including the case where the dump is one migration behind current code.
 
 ## 12. Acceptance
 

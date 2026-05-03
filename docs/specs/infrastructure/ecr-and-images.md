@@ -14,7 +14,7 @@ The container images for the edge agent and (eventually) the cloud services live
 | `solamon-edge-agent` | The Pi-side Python edge agent | Every Pi at install time + on update |
 | `solamon-probe-cli` | Standalone CLI image (optional — could be inside `solamon-edge-agent` for MVP) | Same Pi, but only if probe is delivered as a separate container |
 | `solamon-cloud-app` | The single-process FastAPI + Next.js + ingestion + control-relay container | The cloud EC2 |
-| `solamon-cloud-postgres` | Optional — only if we customise Postgres + Timescale image; otherwise we use the upstream `timescale/timescaledb:2.14-pg16` directly | The cloud EC2 |
+| ~~`solamon-cloud-postgres`~~ | _(MVP: not used.)_ The bootstrap script uses upstream `timescale/timescaledb:2.14-pg16` directly. The custom-image slot is reserved for if/when we need a Timescale build with extra extensions or our own retention-policy bundles. | n/a |
 
 For MVP, ship two repos: `solamon-edge-agent` and `solamon-cloud-app`. The probe-cli ships inside the edge-agent image (single binary `solamon-probe` on PATH inside the container). Postgres uses the upstream image — no customisation worth versioning.
 
@@ -141,6 +141,15 @@ A pull-only IAM user is acceptable for MVP because:
 - One per project (not per Pi) — small blast radius if compromised.
 - Rotated quarterly (calendar reminder).
 - Read-only — even a stolen token can only pull public images, not push or delete.
+
+**Rotation procedure.** Manual rotation is fine for MVP single-Pi but needs documenting; "calendar reminder" alone is forgotten-rotation waiting to happen. Procedure:
+
+1. In the AWS console, generate a new access key for `pi-ecr-puller`. Don't disable the old one yet.
+2. For every deployed Pi (run a list query against `app.site` to enumerate site slugs), tail-end SSH via Tailscale and rewrite `/etc/solamon/aws-credentials` with the new key + secret. Force a `docker login` to test.
+3. Once every Pi has the new credentials and a successful login, disable the old access key in the AWS console.
+4. After ~24 hours, delete the old access key entirely.
+
+After site count > 2, this becomes annoying. The right next step is the SSM hybrid plan (§6.2 / [SOL-10](https://linear.app/solamon/issue/SOL-10)) — that eliminates the long-lived credentials entirely.
 
 ### 6.2 Option B: AWS SSM hybrid activation (post-MVP, [SOL-10](https://linear.app/solamon/issue/SOL-10))
 
