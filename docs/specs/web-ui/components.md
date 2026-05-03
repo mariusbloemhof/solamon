@@ -1,0 +1,191 @@
+# Web UI — components
+
+**Spec group:** [web-ui](README.md)
+**Linear:** [SOL-9](https://linear.app/solamon/issue/SOL-9)
+
+Component inventory. The MVP UI is built from three layers stacked from low to high:
+
+1. **shadcn/ui primitives** — accessible, unstyled-by-default React components (Button, Card, Dialog, etc.) copy-pasted into the repo.
+2. **Tremor** — analytics-dashboard-specific components (Metric, LineChart, BarList, Donut) layered on Recharts.
+3. **Solamon custom cards** — domain-specific compositions of the above (PowerHeroTile, VoltagePerPhaseCard, etc.).
+
+---
+
+## 1. shadcn/ui — primitives
+
+shadcn/ui works by you copying source code into your repo (`components/ui/*.tsx`). No npm dep on the components themselves — only on `@radix-ui/*` (which the shadcn pieces wrap) and `class-variance-authority` / `clsx` / `tailwind-merge`.
+
+Components installed for MVP (run `npx shadcn add <name>` for each):
+
+| Component | Used in |
+|-----------|---------|
+| `button` | Forms, control panel, everywhere |
+| `card` | Most cards (the wrapper, not the contents) |
+| `input` | Login, command forms |
+| `label` | Form fields |
+| `select` | Demand window dropdown, time-window selector |
+| `form` | Login form (RHF integration) |
+| `dialog` | Confirm-action prompts (e.g., "really apply this command?") |
+| `sheet` | Site Setup sidebar on the dashboard |
+| `dropdown-menu` | User menu in the top bar |
+| `toast` (sonner) | Ephemeral notifications |
+| `table` | Audit lists, profile tables, admin lists |
+| `tabs` | Device detail page |
+| `skeleton` | Loading placeholders |
+| `tooltip` | Hover hints on cards |
+| `badge` | Status pills (online / offline / fault) |
+| `separator` | Section dividers |
+
+Installing shadcn primitives from the CLI overwrites a path under `components/ui/`. Treat as your code thereafter — diff and review before regen.
+
+## 2. Tremor — dashboard widgets
+
+Tremor 3.x components used:
+
+| Component | Used in |
+|-----------|---------|
+| `<Card>` | Tremor's card variant (richer than shadcn's; used inside dashboard cards) |
+| `<Metric>` | Big-number displays (Active power, Energy today) |
+| `<Title>` / `<Subtitle>` / `<Text>` | Card headings and sublabels |
+| `<LineChart>` | Main load-profile chart on the dashboard |
+| `<SparkLineChart>` | 60-second sparkline under hero metrics |
+| `<BarList>` | Per-phase power bars |
+| `<DonutChart>` | (Reserved for future — energy breakdown) |
+| `<ProgressBar>` | Voltage range "in band" indicator |
+| `<Badge>` | Trend / delta indicators |
+
+Tremor charts use Recharts under the hood — when Tremor's API is too restrictive (e.g., custom tooltip rendering, nonstandard axis configuration) we drop down to bare `recharts` directly. `recharts` is already a transitive dep of Tremor.
+
+## 3. Solamon custom dashboard cards
+
+Custom React components composing shadcn + Tremor + raw Tailwind. Live in `components/dashboard/*.tsx`.
+
+| Component | Props | What it renders |
+|-----------|-------|-----------------|
+| `<PowerHeroTile>` | `{ device_id }` | Total active power as a `<Metric>` + 60-second `<SparkLineChart>`. Subscribes to `useDeviceLiveStream`. |
+| `<EnergyTodayTile>` | `{ device_id }` | kWh import / export with Δ-vs-yesterday under each. |
+| `<DemandTile>` | `{ device_id }` | Current `active_power_demand` + peak with timestamp. Click to navigate to `/sites/{slug}/control`. |
+| `<VoltagePerPhaseCard>` | `{ device_id }` | Three numeric tiles (V_a / V_b / V_c) with a `<ProgressBar>` showing position within the 207-253 V healthy band. Per-tile colour: green in band, amber 5 % outside, red 10 % outside. |
+| `<CurrentPerPhaseCard>` | `{ device_id }` | Three bars + a fourth thin bar for neutral current. Bars relative to max-current-in-period. |
+| `<PerPhasePowerCard>` | `{ device_id }` | Three bars (P_a / P_b / P_c) showing balance. |
+| `<PowerFactorCard>` | `{ device_id }` | Four numeric tiles (PF_a / PF_b / PF_c / PF_sum). **Sign-aware rendering**: each tile shows the sign explicitly (e.g., `+0.92`). Mixed signs across phases are highlighted with a warning border (CT polarity flipped diagnostic). |
+| `<UnbalanceCard>` | `{ device_id, kind: "voltage" \| "current" }` | Numeric value + 24-hour `<SparkLineChart>` of the unbalance. Threshold lines drawn at 2 % and 5 %. |
+| `<FrequencyCard>` | `{ device_id }` | Big-number `<Metric>` centered on 50.0 Hz target with min/max-last-hour underneath. (Tremor doesn't have a circular gauge in 3.x — for MVP we render the numeric "+/- delta from 50 Hz" with colour, not a literal gauge.) |
+| `<ThdCard>` | `{ device_id }` | Two rows of three small bars: THD V on top, THD I on bottom. Threshold lines at 5 % (V) and a context-dependent reference for I. |
+| `<EdgeHealthCard>` | `{ site_slug }` | Modbus errors / minute, last successful read (relative time), Pi heartbeat (relative time), buffer depth in seconds, halted blocks if any. Subscribes to the `heartbeat` WS message type. |
+| `<LoadProfileChart>` | `{ device_id }` | The big main chart. `<LineChart>` with selectable window (1 h / 6 h / 24 h / 7 d) and overlay toggles (Pa/b/c, Q, S, PF). Click + drag to zoom. Demand peaks marked with vertical lines. |
+| `<SiteSetupSheet>` | `{ device_id }` | shadcn `<Sheet>` (right-side drawer) showing PT/CT ratios, wiring type, demand window setting (with link to Control panel), sub-variant note, last config-read time. |
+| `<CommandStatusTimeline>` | `{ command_id }` | Vertical timeline with per-state rows (pending / sent / confirmed / failed / expired). Subscribes to `useCommandLiveStream`. Each row has timestamp + checkmark / spinner / X. Auto-disconnects WS on terminal state. |
+| `<CommandHistoryTable>` | `{ device_id, limit }` | shadcn `<Table>` of recent commands. |
+
+Each custom card knows its own `device_id` (or `site_slug`); doesn't lift state up to the page. Pages compose them and provide the IDs.
+
+## 4. Auxiliary components
+
+| Component | Purpose |
+|-----------|---------|
+| `<AppShell>` | Top bar + side nav + footer. Server component. |
+| `<UserMenu>` | Display name, sign-out. Client component (uses session). |
+| `<SiteSelector>` | Dropdown for site switching. MVP: single site, so renders disabled with site name. |
+| `<RelativeTime>` | "5s ago" / "2 min ago" / "1 hour ago" auto-updating client component. |
+| `<ConnectionPill>` | Tiny pill in the top bar showing live-WS connection state (connected / reconnecting / offline). |
+| `<DataFreshness>` | "Last update: 3s ago" indicator on dashboard cards; turns amber if last update is more than 30 s old. |
+| `<HexAddressBadge>` | Renders a Modbus register address as `0x0600` in a monospaced badge. Used in the Profile detail page. |
+| `<Pagination>` | shadcn-based pager for the audit log table. |
+
+## 5. Design tokens
+
+Tailwind config (`tailwind.config.ts`) extends the default with:
+
+```ts
+{
+  theme: {
+    extend: {
+      colors: {
+        // Solamon brand neutrals + status colours.
+        // Deliberately limited palette — the dashboard's job is to show NUMBERS,
+        // not look pretty. Heavy chrome obscures the data.
+        brand: {
+          50:  "#f7f9ff",
+          900: "#0a1f44",
+        },
+        ok:    "#10b981",   // green — within healthy band
+        warn:  "#f59e0b",   // amber — out of band but not critical
+        crit:  "#ef4444",   // red — critical / fault
+        muted: "#9ca3af",   // grey — stale / unknown
+      },
+      fontFamily: {
+        sans: ['"Inter"', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace'],   // for hex addresses, raw values
+      },
+    },
+  },
+}
+```
+
+**Status colour rule:** `ok` / `warn` / `crit` / `muted` are the only status colours. Don't introduce new ones for new card types — pick one of these.
+
+**Numeric typography:** all values are tabular-nums (`font-variant-numeric: tabular-nums`) so digits don't shift width as values change. Tailwind's `font-tabular-nums` utility.
+
+**Data density:** information-dense by default. Operators want every relevant number on screen at once; we don't enforce 24-px line heights and acres of whitespace.
+
+## 6. Conventions
+
+### 6.1 Server vs client components
+
+Default to server components. Add `"use client"` only when:
+- The component subscribes to WebSocket data (`useDeviceLiveStream`, `useCommandLiveStream`)
+- The component uses `useState` / `useEffect` / TanStack Query
+- The component handles user interaction (forms, dropdowns)
+
+Pages are server components; cards are typically client components (because they live-update); the chart is a client component.
+
+### 6.2 File structure
+
+```
+app/
+  layout.tsx                             # AppShell
+  loading.tsx
+  error.tsx
+  page.tsx                               # / (redirect)
+  login/
+    page.tsx                             # /login
+    layout.tsx                           # no AppShell on login
+  sites/[slug]/
+    page.tsx                             # /sites/{slug}
+    loading.tsx
+    error.tsx
+    control/page.tsx                     # /sites/{slug}/control
+    devices/[device_id]/page.tsx
+  admin/...
+
+components/
+  ui/                                    # shadcn primitives
+  dashboard/                             # custom cards (§3)
+  AppShell.tsx
+  UserMenu.tsx
+  ...
+
+lib/
+  api-client.ts                          # wraps the OpenAPI-generated SDK with auth
+  ws-client.ts                           # useDeviceLiveStream + useCommandLiveStream
+  query-client.ts                        # TanStack QueryClient + Provider
+  zod-schemas.ts                         # form validation schemas
+
+styles/
+  globals.css                            # Tailwind directives + a few base overrides
+```
+
+### 6.3 Imports
+
+Absolute imports via `@/` alias mapped to repo root in `tsconfig.json`. e.g., `import { Button } from "@/components/ui/button"`.
+
+### 6.4 Testing (deferred to implementation phase)
+
+Component-level testing planned via Vitest + React Testing Library; not specified in this MVP — implementation-phase concern. Visual regression via Playwright is post-MVP.
+
+## 7. Cross-references
+
+- [`pages.md`](pages.md) — which page uses which component
+- [`live-data.md`](live-data.md) — `useDeviceLiveStream` and `useCommandLiveStream` hook contracts
+- [`auth.md`](auth.md) — `<UserMenu>` and protected-route behaviour
