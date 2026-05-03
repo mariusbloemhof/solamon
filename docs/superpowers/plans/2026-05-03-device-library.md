@@ -251,7 +251,8 @@ def test_acuvim_l_profile_conforms_to_schema():
 def test_logical_metrics_yaml_loads_as_dict():
     catalog = _load_yaml(ARCH / "logical_metrics.yaml")
     assert isinstance(catalog, dict)
-    assert "active_power_total" in catalog
+    # v1.1+ shape: top-level wrapper with `metrics` key.
+    assert "active_power_total" in catalog["metrics"]
 ```
 
 - [ ] **Step 2: Run the tests**
