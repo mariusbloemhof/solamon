@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages/profile_loader/src", "packages/edge_agent/src", "packages/cloud_app/src", "packages/probe_cli/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = ["E501"]                 # line-length governed by ruff format
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]             # allow `assert False` in tests
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+asyncio_mode = "auto"

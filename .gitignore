@@ -22,3 +22,11 @@ scratch/
 
 # Claude Code local settings (user-specific)
 .claude/settings.local.json
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solamon-profile-loader"
+version = "0.0.0"
+description = "Solamon profile loader — shared Python lib for catalog + profile parsing/decoding"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+solamon-profile-validate = "profile_loader.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
