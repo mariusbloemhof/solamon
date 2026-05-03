@@ -5,6 +5,7 @@ Spec: docs/specs/device-library/profile-schema.md §6
 from __future__ import annotations
 
 import struct
+from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 
@@ -81,18 +82,20 @@ def decode_format(
     return _BUILTIN[format](buffer, offset, length_bytes)
 
 
+class AcuvimClockDecoder:
+    """Decode Acuvim's 7-register clock block (Y/M/D/H/M/S/DoW) → ISO 8601."""
+
+    def decode(self, buffer: bytes, offset: int, length_bytes: int) -> str:
+        if length_bytes < 14:
+            raise ValueError(f"acuvim_clock requires 14 bytes, got {length_bytes}")
+        y, mo, d, h, mi, s, _dow = struct.unpack_from(">7H", buffer, offset)
+        try:
+            dt = datetime(y, mo, d, h, mi, s, tzinfo=timezone.utc)
+        except ValueError as e:
+            raise ValueError(f"acuvim_clock decode: {e}") from e
+        return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def default_registry() -> dict[str, CustomDecoder]:
-    """Return a fresh registry seeded with built-in custom decoders.
-
-    Task 8 replaces _AcuvimClockDecoderStub with the real AcuvimClockDecoder.
-    """
-    return {
-        "acuvim_clock": _AcuvimClockDecoderStub(),
-    }
-
-
-class _AcuvimClockDecoderStub:
-    """Transient stub for acuvim_clock; full implementation in Task 8."""
-
-    def decode(self, buffer: bytes, offset: int, length_bytes: int) -> Any:
-        raise NotImplementedError("AcuvimClockDecoder implemented in Task 8")
+    """Return a fresh registry seeded with built-in custom decoders."""
+    return {"acuvim_clock": AcuvimClockDecoder()}
