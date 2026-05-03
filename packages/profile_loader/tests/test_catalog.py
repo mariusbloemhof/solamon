@@ -49,6 +49,7 @@ def test_catalog_all_returns_every_metric():
 def test_logical_metric_is_frozen():
     """SOLID: value objects are immutable."""
     import pytest
+
     catalog = Catalog.from_dict(yaml.safe_load(SAMPLE))
     apt = catalog.get("active_power_total")
     with pytest.raises((AttributeError, Exception)):  # FrozenInstanceError

@@ -9,7 +9,9 @@ ACUVIM_L_PATH = REPO_ROOT / "architecture" / "profiles" / "acuvim_l.yaml"
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "profile_loader", *args],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
 
 

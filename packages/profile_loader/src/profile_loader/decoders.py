@@ -2,6 +2,7 @@
 
 Spec: docs/specs/device-library/profile-schema.md §6
 """
+
 from __future__ import annotations
 
 import struct
@@ -74,9 +75,7 @@ _BUILTIN: dict[str, _BuiltinFn] = {
 }
 
 
-def decode_format(
-    format: str, buffer: bytes, offset: int, length_bytes: int | None = None
-) -> Any:
+def decode_format(format: str, buffer: bytes, offset: int, length_bytes: int | None = None) -> Any:
     """Decode a single value from `buffer` at `offset` using `format`."""
     if format not in _BUILTIN:
         raise KeyError(f"unknown format: {format}")

@@ -2,6 +2,7 @@
 
 Spec: docs/specs/device-library/profile-schema.md §4
 """
+
 from __future__ import annotations
 
 from typing import Any, Protocol
@@ -15,6 +16,7 @@ class ModbusClient(Protocol):
 
     SOLID-I (interface segregation): only the methods we actually call.
     """
+
     async def read_holding_registers(self, address: int, count: int, slave: int = ...) -> Any: ...
     async def read_input_registers(self, address: int, count: int, slave: int = ...) -> Any: ...
 
@@ -37,7 +39,9 @@ def _registers_to_bytes(registers: list[int]) -> bytes:
 
 
 async def evaluate_read(
-    client: ModbusClient, read: FingerprintRead, unit_id: int,
+    client: ModbusClient,
+    read: FingerprintRead,
+    unit_id: int,
 ) -> tuple[bool, str | None, Any]:
     """Run one fingerprint read. Returns (matched, failure_or_none, decoded_value)."""
     response = await _do_read(client, read.address, read.length, read.fc, unit_id)
@@ -52,7 +56,11 @@ async def evaluate_read(
         return True, None, None
 
     if is_error:
-        return False, f"unexpected modbus exception {getattr(response, 'exception_code', None)!r}", None
+        return (
+            False,
+            f"unexpected modbus exception {getattr(response, 'exception_code', None)!r}",
+            None,
+        )
 
     if read.format is None:
         return True, None, None
@@ -74,7 +82,9 @@ async def evaluate_read(
 
 
 async def evaluate_identifier(
-    client: ModbusClient, ident: FingerprintIdentifier, unit_id: int,
+    client: ModbusClient,
+    ident: FingerprintIdentifier,
+    unit_id: int,
 ) -> tuple[str, Any] | None:
     """Read one identifier. Returns (logical, value) on success, None on warning."""
     try:
@@ -84,7 +94,11 @@ async def evaluate_identifier(
         buf = _registers_to_bytes(getattr(response, "registers", []))
         length_bytes = ident.length * 2 if ident.format == "ascii" else None
         value = decode_format(ident.format, buf, 0, length_bytes)
-        if ident.expected_contains and isinstance(value, str) and ident.expected_contains not in value:
+        if (
+            ident.expected_contains
+            and isinstance(value, str)
+            and ident.expected_contains not in value
+        ):
             return None
         return (ident.logical, value)
     except Exception:

@@ -2,6 +2,7 @@
 
 Spec: docs/specs/device-library/profile-schema.md §7-8
 """
+
 from __future__ import annotations
 
 import json
@@ -24,17 +25,31 @@ SCHEMAS = {
 }
 
 FORMAT_BYTES: dict[str, int] = {
-    "float32_be": 4, "float32_le": 4, "float32_mb": 4,
-    "uint16": 2, "int16": 2, "word": 2,
-    "uint32_be": 4, "int32_be": 4, "dword_high_first": 4,
-    "ascii": 0, "custom": 0,
+    "float32_be": 4,
+    "float32_le": 4,
+    "float32_mb": 4,
+    "uint16": 2,
+    "int16": 2,
+    "word": 2,
+    "uint32_be": 4,
+    "int32_be": 4,
+    "dword_high_first": 4,
+    "ascii": 0,
+    "custom": 0,
 }
 
 FORMAT_ALIGN: dict[str, int] = {
-    "float32_be": 4, "float32_le": 4, "float32_mb": 4,
-    "uint32_be": 4, "int32_be": 4, "dword_high_first": 4,
-    "uint16": 2, "int16": 2, "word": 2,
-    "ascii": 1, "custom": 1,
+    "float32_be": 4,
+    "float32_le": 4,
+    "float32_mb": 4,
+    "uint32_be": 4,
+    "int32_be": 4,
+    "dword_high_first": 4,
+    "uint16": 2,
+    "int16": 2,
+    "word": 2,
+    "ascii": 1,
+    "custom": 1,
 }
 
 
@@ -43,6 +58,7 @@ class ProfileLoader:
 
     def __init__(self) -> None:
         from .decoders import default_registry
+
         self._decoders = default_registry()
 
     def register_decoder(self, name: str, decoder: Any) -> None:
@@ -103,6 +119,10 @@ class ProfileLoader:
                     if metric.decoder is None:
                         raise ProfileLoadError(
                             f"{path}: metric '{metric.logical}': format 'custom' requires 'decoder'"
+                        )
+                    if metric.length is None:
+                        raise ProfileLoadError(
+                            f"{path}: metric '{metric.logical}': format 'custom' requires 'length'"
                         )
                     if metric.decoder not in self._decoders:
                         raise ProfileLoadError(

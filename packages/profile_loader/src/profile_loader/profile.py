@@ -2,6 +2,7 @@
 
 Spec: docs/specs/device-library/profile-schema.md
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -144,12 +145,18 @@ class Profile:
                 raw = None
             else:
                 raw_value = decode_format(metric.format, response, metric.offset)
-                value = raw_value * metric.scale if isinstance(raw_value, (int, float)) else raw_value
+                value = (
+                    raw_value * metric.scale if isinstance(raw_value, (int, float)) else raw_value
+                )
                 raw = raw_value if isinstance(raw_value, int) else None
             quality = "good"
             if catalog is not None:
                 cm = catalog.get(metric.logical)
-                if cm is not None and cm.expected_range is not None and isinstance(value, (int, float)):
+                if (
+                    cm is not None
+                    and cm.expected_range is not None
+                    and isinstance(value, (int, float))
+                ):
                     lo, hi = cm.expected_range
                     if value < lo or value > hi:
                         quality = "uncertain"
@@ -199,8 +206,7 @@ class Profile:
 
         match = len(failures) == 0
         confidence = (
-            "none" if not match
-            else ("negative_fingerprint" if used_negative else "positive")
+            "none" if not match else ("negative_fingerprint" if used_negative else "positive")
         )
 
         identifiers: dict[str, Any] = {}
@@ -210,8 +216,9 @@ class Profile:
                 if result is not None:
                     identifiers[result[0]] = result[1]
 
-        return FingerprintResult(match=match, confidence=confidence,
-                                 identifiers=identifiers, failures=failures)
+        return FingerprintResult(
+            match=match, confidence=confidence, identifiers=identifiers, failures=failures
+        )
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Profile:
@@ -225,15 +232,21 @@ class Profile:
         control = {k: _parse_control(k, v) for k, v in raw.get("control", {}).items()}
         return cls(
             schema_version=raw.get("schema_version", "1.0"),
-            device=device, connection=connection,
-            fingerprint=fingerprint, read_blocks=read_blocks, control=control,
+            device=device,
+            connection=connection,
+            fingerprint=fingerprint,
+            read_blocks=read_blocks,
+            control=control,
         )
 
 
 def _parse_fp_read(r: dict[str, Any]) -> FingerprintRead:
     return FingerprintRead(
-        address=r["address"], length=r["length"], fc=r.get("fc", 3),
-        format=r.get("format"), expected=r.get("expected"),
+        address=r["address"],
+        length=r["length"],
+        fc=r.get("fc", 3),
+        format=r.get("format"),
+        expected=r.get("expected"),
         expected_range=tuple(r["expected_range"]) if "expected_range" in r else None,
         expected_contains=r.get("expected_contains"),
         expect_exception=r.get("expect_exception"),
@@ -242,8 +255,11 @@ def _parse_fp_read(r: dict[str, Any]) -> FingerprintRead:
 
 def _parse_fp_id(i: dict[str, Any]) -> FingerprintIdentifier:
     return FingerprintIdentifier(
-        logical=i["logical"], address=i["address"], length=i["length"],
-        format=i["format"], fc=i.get("fc", 3),
+        logical=i["logical"],
+        address=i["address"],
+        length=i["length"],
+        format=i["format"],
+        fc=i.get("fc", 3),
         expected_contains=i.get("expected_contains"),
     )
 
@@ -251,27 +267,45 @@ def _parse_fp_id(i: dict[str, Any]) -> FingerprintIdentifier:
 def _parse_block(b: dict[str, Any]) -> ReadBlock:
     metrics = [
         MetricMap(
-            logical=m["logical"], offset=m["offset"], format=m["format"],
-            scale=m.get("scale", 1.0), sign=m.get("sign"),
-            length=m.get("length"), decoder=m.get("decoder"),
+            logical=m["logical"],
+            offset=m["offset"],
+            format=m["format"],
+            scale=m.get("scale", 1.0),
+            sign=m.get("sign"),
+            length=m.get("length"),
+            decoder=m.get("decoder"),
             aliased=m.get("aliased", False),
         )
         for m in b["metrics"]
     ]
-    return ReadBlock(name=b["name"], fc=b["fc"], address=b["address"],
-                     length=b["length"], cadence_s=b["cadence_s"], metrics=metrics)
+    return ReadBlock(
+        name=b["name"],
+        fc=b["fc"],
+        address=b["address"],
+        length=b["length"],
+        cadence_s=b["cadence_s"],
+        metrics=metrics,
+    )
 
 
 def _parse_control(logical: str, spec: dict[str, Any]) -> ControlSpec:
     rb = spec.get("readback_register")
     readback = (
         ReadbackRegister(
-            address=rb["address"], offset=rb.get("offset", 0),
-            format=rb["format"], fc=rb.get("fc", 3),
-        ) if rb else None
+            address=rb["address"],
+            offset=rb.get("offset", 0),
+            format=rb["format"],
+            fc=rb.get("fc", 3),
+        )
+        if rb
+        else None
     )
     return ControlSpec(
-        logical=logical, fc=spec["fc"], address=spec["address"],
-        format=spec["format"], allowed_values=spec.get("allowed_values"),
-        readback_register=readback, readback_delay_ms=spec.get("readback_delay_ms", 500),
+        logical=logical,
+        fc=spec["fc"],
+        address=spec["address"],
+        format=spec["format"],
+        allowed_values=spec.get("allowed_values"),
+        readback_register=readback,
+        readback_delay_ms=spec.get("readback_delay_ms", 500),
     )

@@ -148,7 +148,7 @@ read_blocks:
     length: 7
     cadence_s: 3600
     metrics:
-      - { logical: meter_clock, offset: 0, format: custom, decoder: acuvim_clock }
+      - { logical: meter_clock, offset: 0, format: custom, decoder: acuvim_clock, length: 7 }
 
   # 5.6 — Configuration (mixed; read at startup + hourly) — every 3600 s
   - name: config

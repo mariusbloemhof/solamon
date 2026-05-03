@@ -1,5 +1,8 @@
 """Solamon profile loader."""
+
 from .catalog import Catalog, LogicalMetric
+from .decoders import AcuvimClockDecoder, CustomDecoder, default_registry
+from .fingerprint import ModbusClient
 from .loader import ProfileLoader
 from .profile import (
     ConnectionInfo,
@@ -22,8 +25,26 @@ from .types import (
 )
 
 __all__ = [
-    "Catalog", "ConnectionInfo", "ControlSpec", "DecodeError", "DeviceInfo",
-    "Fingerprint", "FingerprintIdentifier", "FingerprintRead", "FingerprintResult",
-    "LogicalMetric", "MetricMap", "Profile", "ProfileLoadError", "ProfileLoader",
-    "ReadBlock", "ReadbackRegister", "Reading", "ValidationError",
+    "AcuvimClockDecoder",
+    "Catalog",
+    "ConnectionInfo",
+    "ControlSpec",
+    "CustomDecoder",
+    "DecodeError",
+    "DeviceInfo",
+    "Fingerprint",
+    "FingerprintIdentifier",
+    "FingerprintRead",
+    "FingerprintResult",
+    "LogicalMetric",
+    "MetricMap",
+    "ModbusClient",
+    "Profile",
+    "ProfileLoadError",
+    "ProfileLoader",
+    "ReadBlock",
+    "ReadbackRegister",
+    "Reading",
+    "ValidationError",
+    "default_registry",
 ]

@@ -27,10 +27,37 @@ def test_validate_control_rejects_non_writable_metric(loaded_acuvim_l):
         profile.validate_control("active_power_total", 12.5, catalog=catalog)
 
 
-def test_validate_control_rejects_metric_not_in_profile_control_block(loaded_acuvim_l):
-    catalog, profile, _ = loaded_acuvim_l
-    writable = [m.key for m in catalog.all() if m.is_writable]
-    not_in_profile = [w for w in writable if w not in profile.control]
-    if not_in_profile:
-        with pytest.raises(ValidationError, match="not exposed"):
-            profile.validate_control(not_in_profile[0], 1, catalog=catalog)
+def test_validate_control_rejects_metric_not_in_profile_control_block():
+    """Synthetic catalog + profile where a writable catalog metric is NOT in profile's control."""
+    import yaml
+
+    from profile_loader.catalog import Catalog
+    from profile_loader.profile import Profile
+
+    catalog = Catalog.from_dict(
+        yaml.safe_load("""
+schema_version: "1.0"
+metrics:
+  some_writable:
+    label: Test
+    unit: ""
+    data_type: int
+    category: control
+    is_cumulative: false
+    expected_range: [0, 100]
+    is_writable: true
+    allowed_values: [1, 2]
+""")
+    )
+    profile = Profile.from_dict(
+        {
+            "schema_version": "1.0",
+            "device": {"manufacturer": "Test", "model": "T", "category": "meter"},
+            "connection": {"protocol": "modbus_tcp", "default_port": 502, "default_unit_id": 1},
+            "fingerprint": {"reads": []},
+            "read_blocks": [],
+            # No control block — the metric is writable in catalog but not exposed here
+        }
+    )
+    with pytest.raises(ValidationError, match="not exposed"):
+        profile.validate_control("some_writable", 1, catalog=catalog)

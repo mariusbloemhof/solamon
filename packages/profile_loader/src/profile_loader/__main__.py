@@ -5,6 +5,7 @@ Exits:
   1 — invalid arguments
   2 — schema or cross-validation failure
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,7 +39,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"✗ {e}", file=sys.stderr)
             return 2
         n_metrics = sum(len(b.metrics) for b in profile.read_blocks)
-        print(f"OK: {profile.device.manufacturer} / {profile.device.model} ({profile.device.category})")
+        print(
+            f"OK: {profile.device.manufacturer} / {profile.device.model} ({profile.device.category})"
+        )
         print(f"   {len(profile.read_blocks)} read block(s); {n_metrics} metric(s) total")
         print(f"   {len(profile.control)} control register(s)")
         return 0

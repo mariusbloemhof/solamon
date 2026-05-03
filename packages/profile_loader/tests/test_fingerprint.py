@@ -1,4 +1,5 @@
 """Fingerprint matching against a fake Modbus client (Protocol-based)."""
+
 from typing import Any
 
 import pytest
@@ -9,14 +10,17 @@ class FakeResponse:
         self.registers = registers or []
         self._exc = exception_code
 
-    def isError(self) -> bool: return self._exc is not None
+    def isError(self) -> bool:
+        return self._exc is not None
 
     @property
-    def exception_code(self) -> int | None: return self._exc
+    def exception_code(self) -> int | None:
+        return self._exc
 
 
 class FakeModbusClient:
     """Implements the ModbusClient Protocol for tests — no pymodbus dependency."""
+
     def __init__(self, responses: dict[tuple[int, int, int], Any]):
         self.responses = responses
 
@@ -76,3 +80,37 @@ async def test_fingerprint_match_fails_when_value_outside_range(loaded_acuvim_l)
     result = await profile.fingerprint_match(client)
     assert result.match is False
     assert any("range" in f for f in result.failures)
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_match_collects_identifiers_when_match():
+    """Synthetic profile with one identifier — verify it gets captured into
+    FingerprintResult.identifiers when the fingerprint matches."""
+    from profile_loader.profile import Profile
+
+    profile = Profile.from_dict(
+        {
+            "schema_version": "1.0",
+            "device": {"manufacturer": "Test", "model": "T", "category": "meter"},
+            "connection": {"protocol": "modbus_tcp", "default_port": 502, "default_unit_id": 1},
+            "fingerprint": {
+                "reads": [
+                    {"address": 0x100, "length": 1, "format": "uint16", "expected": 42},
+                ],
+                "identifiers": [
+                    {"logical": "manufacturer", "address": 0x200, "length": 4, "format": "ascii"},
+                ],
+            },
+            "read_blocks": [],
+        }
+    )
+
+    client = FakeModbusClient(
+        {
+            (0x100, 1, 3): FakeResponse(registers=[42]),
+            (0x200, 4, 3): FakeResponse(registers=[0x4163, 0x6375, 0x456E, 0x0000]),  # "Acuen"
+        }
+    )
+    result = await profile.fingerprint_match(client)
+    assert result.match is True
+    assert result.identifiers.get("manufacturer") == "AccuEn"

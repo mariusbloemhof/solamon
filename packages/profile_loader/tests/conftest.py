@@ -1,4 +1,5 @@
 """Shared fixtures."""
+
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ ARCH = REPO_ROOT / "architecture"
 
 class _StubClockDecoder:
     """Stub for tests that don't exercise the real clock decoder."""
+
     def decode(self, buffer: bytes, offset: int, length_bytes: int) -> str:
         return "1970-01-01T00:00:00Z"
 

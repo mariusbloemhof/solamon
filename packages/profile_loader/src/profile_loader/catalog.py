@@ -2,6 +2,7 @@
 
 Spec: docs/specs/device-library/logical-metric-catalog.md
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,8 +10,17 @@ from typing import Any, Literal
 
 DataType = Literal["float", "int", "bool", "enum", "bitfield", "datetime", "string"]
 Category = Literal[
-    "power", "energy", "voltage", "current", "power_factor",
-    "frequency", "demand", "quality", "configuration", "control", "derived",
+    "power",
+    "energy",
+    "voltage",
+    "current",
+    "power_factor",
+    "frequency",
+    "demand",
+    "quality",
+    "configuration",
+    "control",
+    "derived",
 ]
 
 
@@ -57,7 +67,9 @@ class Catalog:
                 data_type=entry["data_type"],
                 category=entry["category"],
                 is_cumulative=entry["is_cumulative"],
-                expected_range=tuple(entry["expected_range"]) if "expected_range" in entry else None,
+                expected_range=tuple(entry["expected_range"])
+                if "expected_range" in entry
+                else None,
                 monotonic=entry.get("monotonic"),
                 direction_convention=entry.get("direction_convention"),
                 is_writable=entry.get("is_writable", False),

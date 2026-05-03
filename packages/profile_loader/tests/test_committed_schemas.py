@@ -4,6 +4,7 @@
 If these tests fail, the YAML and schema have drifted and NO downstream code
 (edge agent, cloud, probe) will work correctly.
 """
+
 import json
 from pathlib import Path
 
@@ -34,12 +35,16 @@ def _validate(raw: dict, schema_path: Path) -> list[str]:
 
 
 def test_logical_metrics_yaml_conforms_to_schema():
-    errors = _validate(_load_yaml(ARCH / "logical_metrics.yaml"), ARCH / "logical_metrics.schema.json")
+    errors = _validate(
+        _load_yaml(ARCH / "logical_metrics.yaml"), ARCH / "logical_metrics.schema.json"
+    )
     assert errors == [], "\n".join(errors)
 
 
 def test_acuvim_l_profile_conforms_to_schema():
-    errors = _validate(_load_yaml(ARCH / "profiles" / "acuvim_l.yaml"), ARCH / "profiles" / "profile.schema.json")
+    errors = _validate(
+        _load_yaml(ARCH / "profiles" / "acuvim_l.yaml"), ARCH / "profiles" / "profile.schema.json"
+    )
     assert errors == [], "\n".join(errors)
 
 

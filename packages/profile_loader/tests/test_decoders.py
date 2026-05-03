@@ -6,11 +6,15 @@ from profile_loader.decoders import decode_format
 
 
 def test_float32_be_decodes_50hz():
-    assert decode_format("float32_be", struct.pack(">f", 50.02), 0) == pytest.approx(50.02, rel=1e-6)
+    assert decode_format("float32_be", struct.pack(">f", 50.02), 0) == pytest.approx(
+        50.02, rel=1e-6
+    )
 
 
 def test_float32_le_decodes_50hz():
-    assert decode_format("float32_le", struct.pack("<f", 50.02), 0) == pytest.approx(50.02, rel=1e-6)
+    assert decode_format("float32_le", struct.pack("<f", 50.02), 0) == pytest.approx(
+        50.02, rel=1e-6
+    )
 
 
 def test_float32_mb_decodes_50hz():
