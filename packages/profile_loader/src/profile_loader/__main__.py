@@ -15,8 +15,7 @@ from pathlib import Path
 from .loader import ProfileLoader
 from .types import ProfileLoadError
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_CATALOG = REPO_ROOT / "architecture" / "logical_metrics.yaml"
+DEFAULT_CATALOG = Path(__file__).resolve().parents[4] / "architecture" / "logical_metrics.yaml"
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -6,12 +6,14 @@ on:
     paths:
       - "packages/profile_loader/**"
       - "architecture/**"
+      - "docs/specs/device-library/**"
       - "pyproject.toml"
       - ".github/workflows/device-library.yml"
   pull_request:
     paths:
       - "packages/profile_loader/**"
       - "architecture/**"
+      - "docs/specs/device-library/**"
       - "pyproject.toml"
 
 permissions:

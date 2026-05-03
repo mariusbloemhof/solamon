@@ -3,24 +3,26 @@ import yaml
 from profile_loader.catalog import Catalog, LogicalMetric
 
 SAMPLE = """
-active_power_total:
-  label: "Total active power"
-  unit: kW
-  data_type: float
-  category: power
-  is_cumulative: false
-  direction_convention: "positive = consumption"
-  expected_range: [-2000, 2000]
+schema_version: "1.0"
+metrics:
+  active_power_total:
+    label: "Total active power"
+    unit: kW
+    data_type: float
+    category: power
+    is_cumulative: false
+    direction_convention: "positive = consumption"
+    expected_range: [-2000, 2000]
 
-demand_window_minutes:
-  label: "Demand integration window"
-  unit: min
-  data_type: int
-  category: configuration
-  is_cumulative: false
-  expected_range: [1, 60]
-  is_writable: true
-  allowed_values: [1, 5, 10, 15, 30]
+  demand_window_minutes:
+    label: "Demand integration window"
+    unit: min
+    data_type: int
+    category: configuration
+    is_cumulative: false
+    expected_range: [1, 60]
+    is_writable: true
+    allowed_values: [1, 5, 10, 15, 30]
 """
 
 

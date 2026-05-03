@@ -336,7 +336,7 @@ Validation runs on profile load (every time the agent starts, every time the pro
 `Profile.decode(block_name, response)` returns a dict where:
 
 - Keys are logical metric names.
-- Values are `Reading` objects: `{ value, raw_value, quality, decoded_at }`.
+- Values are `Reading` objects: `{ value, raw_value, quality }`. The decode is pure; consumers (edge agent, probe CLI) inject their own decoded-at timestamp at call time.
 - `quality` is `"good"` if the decoded value is within the catalog's `expected_range`; `"uncertain"` if outside; `"bad"` only if decode itself failed (which should never happen because format errors are caught at load).
 
 ## 8. JSON Schema

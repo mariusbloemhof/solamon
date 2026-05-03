@@ -170,6 +170,8 @@ The meter's internal RTC. Compared against Pi NTP for drift detection.
 
 `acuvim_clock` is a one-off custom format defined for this profile. It packs Year / Month / Day / Hour / Minute / Second / DoW each as a uint16. The profile loader recognises `acuvim_clock` as a profile-local format extension; future devices needing date decoding should reuse this format type or the loader gets a registry of named decoders.
 
+**UTC assumption.** The meter_clock value is interpreted as UTC by `AcuvimClockDecoder` — the Acuvim L doesn't report timezone metadata. **At commissioning, set the meter's clock to UTC via the AXM-WEB2 web UI.** A meter left on local time (SAST = UTC+2) will appear to drift by exactly the timezone offset — that's a config mismatch, not real drift. The probe-CLI's pre-flight (post-MVP, SOL-18) will warn if `meter_clock - pi_clock_utc` is close to a whole-hour offset.
+
 ### 5.6 `config` — startup + every 3600 s — `0x0103`–`0x0109` (mixed)
 
 Read-once at startup, re-read hourly to detect mid-life config changes.

@@ -83,7 +83,16 @@ def decode_format(format: str, buffer: bytes, offset: int, length_bytes: int | N
 
 
 class AcuvimClockDecoder:
-    """Decode Acuvim's 7-register clock block (Y/M/D/H/M/S/DoW) → ISO 8601."""
+    """Decode Acuvim's 7-register clock block (Y/M/D/H/M/S/DoW) → ISO 8601.
+
+    The meter's clock registers carry a wall-clock time with no timezone metadata.
+    This decoder interprets them as UTC unconditionally. Drift detection (the
+    primary use case for meter_clock per acuvim-l-profile.md §5.5) only works
+    correctly if the meter is configured to UTC at commissioning. If the meter
+    is left on local time (e.g., SAST = UTC+2), `meter_clock - pi_clock_utc`
+    will report the timezone offset as drift — that's a meter config issue,
+    not real clock drift.
+    """
 
     def decode(self, buffer: bytes, offset: int, length_bytes: int) -> str:
         if length_bytes < 14:

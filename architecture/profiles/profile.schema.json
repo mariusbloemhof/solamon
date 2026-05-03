@@ -115,12 +115,21 @@
         { "required": ["expected_contains"] },
         { "required": ["expect_exception"] }
       ],
-      "if": {
-        "not": { "required": ["expect_exception"] }
-      },
-      "then": {
-        "required": ["format"]
-      }
+      "allOf": [
+        {
+          "if": { "not": { "required": ["expect_exception"] } },
+          "then": { "required": ["format"] }
+        },
+        {
+          "if": { "required": ["expected_contains"] },
+          "then": {
+            "properties": {
+              "format": { "const": "ascii" }
+            },
+            "required": ["format"]
+          }
+        }
+      ]
     },
     "Identifier": {
       "type": "object",

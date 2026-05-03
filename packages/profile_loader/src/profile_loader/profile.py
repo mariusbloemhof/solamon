@@ -7,9 +7,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from .types import DecodeError, Reading, ValidationError
+from .decoders import decode_format
+from .types import DecodeError, FingerprintResult, Reading, ValidationError
+
+if TYPE_CHECKING:
+    from .catalog import Catalog
+    from .decoders import CustomDecoder
+    from .fingerprint import ModbusClient
 
 
 @dataclass(frozen=True)
@@ -112,15 +118,13 @@ class Profile:
         self,
         block_name: str,
         response: bytes,
-        catalog: Any | None = None,
-        decoders: dict[str, Any] | None = None,
+        catalog: Catalog | None = None,
+        decoders: dict[str, CustomDecoder] | None = None,
     ) -> dict[str, Reading]:
         """Decode an FC03/FC04 response into a dict keyed by logical metric name.
 
         Pure function over the inputs; side-effect-free.
         """
-        from .decoders import decode_format
-
         block = next((b for b in self.read_blocks if b.name == block_name), None)
         if block is None:
             raise DecodeError(f"unknown block: {block_name}")
@@ -163,7 +167,7 @@ class Profile:
             result[metric.logical] = Reading(value=value, raw_value=raw, quality=quality)
         return result
 
-    def validate_control(self, logical_metric: str, value: Any, catalog: Any) -> None:
+    def validate_control(self, logical_metric: str, value: Any, catalog: Catalog) -> None:
         """Validates a control command. Raises ValidationError on bad input.
 
         Spec: profile-schema.md §7.1
@@ -184,14 +188,19 @@ class Profile:
                 f"value {value!r} not in allowed values {allowed} for '{logical_metric}'"
             )
 
-    async def fingerprint_match(self, client: Any, unit_id: int | None = None):
+    async def fingerprint_match(
+        self,
+        client: ModbusClient,
+        unit_id: int | None = None,
+    ) -> FingerprintResult:
         """Match device fingerprint via ModbusClient Protocol.
 
         Returns FingerprintResult with match status, confidence, identifiers, and failures.
-        Lazy imports inside to avoid circular dependency with fingerprint.py.
         """
+        # Lazy import: fingerprint.py imports FingerprintRead/FingerprintIdentifier
+        # from this module, so a top-level reverse import would create a cycle.
+        # decoders.py and types.py have no such cycle; their imports are at module top.
         from .fingerprint import evaluate_identifier, evaluate_read
-        from .types import FingerprintResult
 
         slave_id = unit_id if unit_id is not None else self.connection.default_unit_id
         failures: list[str] = []
@@ -210,18 +219,29 @@ class Profile:
         )
 
         identifiers: dict[str, Any] = {}
+        failed_identifiers: list[tuple[str, str]] = []
         if match:
             for ident in self.fingerprint.identifiers:
                 result = await evaluate_identifier(client, ident, slave_id)
-                if result is not None:
+                if result[0] is None:
+                    failed_identifiers.append((ident.logical, result[1]))
+                else:
                     identifiers[result[0]] = result[1]
 
         return FingerprintResult(
-            match=match, confidence=confidence, identifiers=identifiers, failures=failures
+            match=match,
+            confidence=confidence,
+            identifiers=identifiers,
+            failures=failures,
+            failed_identifiers=failed_identifiers,
         )
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Profile:
+        """Parse a profile dict into a Profile dataclass. Always go through
+        ProfileLoader.load_profile() for validated loading; this builder is the
+        low-level wire used by the loader after schema validation.
+        """
         device = DeviceInfo(**raw["device"])
         connection = ConnectionInfo(**raw["connection"])
         fingerprint = Fingerprint(

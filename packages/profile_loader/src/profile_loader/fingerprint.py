@@ -30,12 +30,9 @@ async def _do_read(client: ModbusClient, address: int, count: int, fc: int, unit
 
 
 def _registers_to_bytes(registers: list[int]) -> bytes:
-    out = bytearray()
-    for r in registers:
-        # Clamp to uint16 range (0-65535) to handle test values that overflow
-        val = int(r) & 0xFFFF
-        out.extend(val.to_bytes(2, "big", signed=False))
-    return bytes(out)
+    # Modbus 16-bit registers are uint16 by spec; mask defensively against
+    # malformed responses (a misbehaving Modbus library could yield out-of-range ints).
+    return b"".join((int(r) & 0xFFFF).to_bytes(2, "big") for r in registers)
 
 
 async def evaluate_read(
@@ -63,6 +60,9 @@ async def evaluate_read(
         )
 
     if read.format is None:
+        # Defense-in-depth: schema if/then enforces format whenever expect_exception
+        # is absent, so this branch is unreachable under the published contract.
+        # Kept as a safety net against bypassed schema validation.
         return True, None, None
 
     buf = _registers_to_bytes(getattr(response, "registers", []))
@@ -75,7 +75,16 @@ async def evaluate_read(
         lo, hi = read.expected_range
         if not (lo <= value <= hi):
             return False, f"value {value!r} outside range [{lo}, {hi}]", value
-    if read.expected_contains is not None and isinstance(value, str):
+    if read.expected_contains is not None:
+        if not isinstance(value, str):
+            return (
+                False,
+                (
+                    f"expected_contains requires format=ascii (string value), "
+                    f"got {type(value).__name__} from format={read.format!r}"
+                ),
+                value,
+            )
         if read.expected_contains not in value:
             return False, f"value {value!r} does not contain {read.expected_contains!r}", value
     return True, None, value
@@ -85,12 +94,16 @@ async def evaluate_identifier(
     client: ModbusClient,
     ident: FingerprintIdentifier,
     unit_id: int,
-) -> tuple[str, Any] | None:
-    """Read one identifier. Returns (logical, value) on success, None on warning."""
+) -> tuple[str, Any] | tuple[None, str]:
+    """Read one identifier. Returns (logical, value) on success, (None, reason) on failure.
+
+    Catches Modbus/network/decode exceptions specifically — unexpected exception
+    types (programming errors) propagate so they're not silently masked.
+    """
     try:
         response = await _do_read(client, ident.address, ident.length, ident.fc, unit_id)
         if bool(getattr(response, "isError", lambda: False)()):
-            return None
+            return (None, f"modbus error reading {ident.logical}")
         buf = _registers_to_bytes(getattr(response, "registers", []))
         length_bytes = ident.length * 2 if ident.format == "ascii" else None
         value = decode_format(ident.format, buf, 0, length_bytes)
@@ -99,7 +112,10 @@ async def evaluate_identifier(
             and isinstance(value, str)
             and ident.expected_contains not in value
         ):
-            return None
+            return (
+                None,
+                f"{ident.logical} value {value!r} missing expected_contains {ident.expected_contains!r}",
+            )
         return (ident.logical, value)
-    except Exception:
-        return None
+    except (ConnectionError, OSError, TimeoutError, ValueError, KeyError) as e:
+        return (None, f"{ident.logical}: {type(e).__name__}: {e}")

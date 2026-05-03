@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from jsonschema import Draft202012Validator
@@ -16,13 +16,15 @@ from .catalog import Catalog
 from .profile import Profile
 from .types import ProfileLoadError
 
-# Locate the architecture/ tree relative to this file.
-# packages/profile_loader/src/profile_loader/loader.py -> repo root is parents[4]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-SCHEMAS = {
-    "catalog": REPO_ROOT / "architecture" / "logical_metrics.schema.json",
-    "profile": REPO_ROOT / "architecture" / "profiles" / "profile.schema.json",
-}
+if TYPE_CHECKING:
+    from .decoders import CustomDecoder
+
+# Workspace-checkout layout: packages/profile_loader/src/profile_loader/loader.py
+# → repo root is parents[4]. This works for `pip install -e packages/profile_loader`
+# from the repo root (the only supported install pattern in MVP). Distribution via
+# PyPI is post-MVP; when it lands, schemas will be bundled inside the package via
+# importlib.resources.
+DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "architecture"
 
 FORMAT_BYTES: dict[str, int] = {
     "float32_be": 4,
@@ -56,10 +58,21 @@ FORMAT_ALIGN: dict[str, int] = {
 class ProfileLoader:
     """Loads + validates profile YAMLs and the logical-metric catalog."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        schema_dir: Path | None = None,
+        decoders: dict[str, CustomDecoder] | None = None,
+    ) -> None:
         from .decoders import default_registry
 
-        self._decoders = default_registry()
+        self._schema_dir = (schema_dir or DEFAULT_SCHEMA_DIR).resolve()
+        if not self._schema_dir.exists():
+            raise ProfileLoadError(
+                f"schema dir not found: {self._schema_dir}. "
+                "Pass schema_dir=Path(...) to ProfileLoader() if running outside "
+                "the workspace checkout. (Distribution via PyPI is post-MVP.)"
+            )
+        self._decoders = decoders if decoders is not None else default_registry()
 
     def register_decoder(self, name: str, decoder: Any) -> None:
         self._decoders[name] = decoder
@@ -71,13 +84,13 @@ class ProfileLoader:
     def load_catalog(self, path: str | Path) -> Catalog:
         path = Path(path)
         raw = _load_yaml(path)
-        _validate_jsonschema(raw, SCHEMAS["catalog"], path)
+        _validate_jsonschema(raw, self._schema_dir / "logical_metrics.schema.json", path)
         return Catalog.from_dict(raw)
 
     def load_profile(self, path: str | Path, catalog: Catalog) -> Profile:
         path = Path(path)
         raw = _load_yaml(path)
-        _validate_jsonschema(raw, SCHEMAS["profile"], path)
+        _validate_jsonschema(raw, self._schema_dir / "profiles" / "profile.schema.json", path)
         profile = Profile.from_dict(raw)
         self._cross_validate(profile, catalog, path)
         return profile

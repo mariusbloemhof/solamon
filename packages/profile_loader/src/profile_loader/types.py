@@ -31,3 +31,7 @@ class FingerprintResult:
     confidence: Literal["positive", "negative_fingerprint", "none"]
     identifiers: dict[str, Any] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
+    failed_identifiers: list[tuple[str, str]] = field(default_factory=list)
+    """List of (logical_metric_name, reason) for identifier reads that failed.
+    Identifier failures are warnings, not match-blocking errors — but operators
+    still need visibility into them for diagnostics."""

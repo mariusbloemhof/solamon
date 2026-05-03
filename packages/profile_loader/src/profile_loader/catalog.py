@@ -52,13 +52,18 @@ class Catalog:
         return list(self.metrics.values())
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any], schema_version: str = "1.0") -> Catalog:
-        # v1.1+: { schema_version: "...", metrics: {...} }; v1.0: flat metric map.
-        if "schema_version" in raw and "metrics" in raw:
-            schema_version = raw["schema_version"]
-            metric_map = raw["metrics"]
-        else:
-            metric_map = raw
+    def from_dict(cls, raw: dict[str, Any]) -> Catalog:
+        """Parse a wrapper-shape catalog dict into a Catalog. Always go through
+        ProfileLoader.load_catalog() for validated loading; this builder is the
+        low-level wire used by the loader and by tests after explicit fixture setup.
+        """
+        if "schema_version" not in raw or "metrics" not in raw:
+            raise KeyError(
+                "catalog must have 'schema_version' and 'metrics' top-level keys "
+                "(per logical_metrics.schema.json)"
+            )
+        schema_version = raw["schema_version"]
+        metric_map = raw["metrics"]
         metrics = {
             key: LogicalMetric(
                 key=key,

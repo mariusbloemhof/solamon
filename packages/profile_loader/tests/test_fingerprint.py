@@ -108,9 +108,33 @@ async def test_fingerprint_match_collects_identifiers_when_match():
     client = FakeModbusClient(
         {
             (0x100, 1, 3): FakeResponse(registers=[42]),
-            (0x200, 4, 3): FakeResponse(registers=[0x4163, 0x6375, 0x456E, 0x0000]),  # "Acuen"
+            (0x200, 4, 3): FakeResponse(
+                registers=[0x4163, 0x6375, 0x456E, 0x0000]
+            ),  # "AccuEn" (8 bytes, trailing nulls stripped → 6 chars)
         }
     )
     result = await profile.fingerprint_match(client)
     assert result.match is True
     assert result.identifiers.get("manufacturer") == "AccuEn"
+    assert result.failed_identifiers == []
+
+
+@pytest.mark.asyncio
+async def test_evaluate_read_rejects_expected_contains_on_non_string():
+    """expected_contains paired with a non-ASCII format must fail loudly,
+    not silently pass. The schema if/then prevents this at load time, but
+    evaluate_read defends against bypassed validation."""
+    from profile_loader.fingerprint import evaluate_read
+    from profile_loader.profile import FingerprintRead
+
+    read = FingerprintRead(
+        address=0x100,
+        length=1,
+        fc=3,
+        format="uint16",
+        expected_contains="x",
+    )
+    client = FakeModbusClient({(0x100, 1, 3): FakeResponse(registers=[42])})
+    ok, reason, _ = await evaluate_read(client, read, 1)
+    assert ok is False
+    assert "expected_contains requires format=ascii" in reason

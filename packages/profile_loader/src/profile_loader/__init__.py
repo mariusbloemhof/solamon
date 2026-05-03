@@ -3,6 +3,7 @@
 from .catalog import Catalog, LogicalMetric
 from .decoders import AcuvimClockDecoder, CustomDecoder, default_registry
 from .fingerprint import ModbusClient
+from .formatting import ADDRESS_FIELDS, format_address
 from .loader import ProfileLoader
 from .profile import (
     ConnectionInfo,
@@ -25,6 +26,7 @@ from .types import (
 )
 
 __all__ = [
+    "ADDRESS_FIELDS",
     "AcuvimClockDecoder",
     "Catalog",
     "ConnectionInfo",
@@ -47,4 +49,5 @@ __all__ = [
     "Reading",
     "ValidationError",
     "default_registry",
+    "format_address",
 ]
