@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://solamon.example/schemas/probe-output-1.0.json",
+  "title": "solamon-probe JSON output",
+  "description": "JSON output emitted by solamon-probe --json. Spec: docs/specs/probe-cli/README.md §3.6.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target",
+    "matched_profile",
+    "matched_confidence",
+    "ambiguous_matches",
+    "fingerprint_results",
+    "identifiers",
+    "block_probe",
+    "cross_check",
+    "reference_value_comparison",
+    "sanity_warnings",
+    "exit_code",
+    "verdict",
+    "duration_ms"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "target": {
+      "type": "object",
+      "required": ["host", "port", "unit_id"],
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "unit_id": { "type": "integer", "minimum": 0, "maximum": 247 }
+      }
+    },
+    "matched_profile": {
+      "anyOf": [
+        { "type": "string" },
+        { "type": "null" }
+      ],
+      "description": "Profile slug that won; null when no match or ambiguous."
+    },
+    "matched_confidence": {
+      "type": "string",
+      "enum": ["positive_fingerprint", "negative_fingerprint", "none"]
+    },
+    "ambiguous_matches": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "When more than one profile matched at the same confidence level. Empty otherwise."
+    },
+    "fingerprint_results": {
+      "type": "object",
+      "description": "Per-profile fingerprint outcomes, keyed by profile slug.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": { "$ref": "#/$defs/FingerprintResult" }
+      },
+      "additionalProperties": false
+    },
+    "identifiers": {
+      "type": "object",
+      "description": "Captured identifier values from the matched profile's fingerprint.identifiers block (e.g. manufacturer, model, firmware_version, serial_number for Acuvim II). Empty for profiles with no identifiers (e.g. Acuvim L).",
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    },
+    "sub_variant_required": {
+      "type": "boolean",
+      "description": "True when the matched profile applies to multiple physical variants that share the same Modbus map (e.g. Acuvim L CL/DL/EL/KL). Operator must capture sub-variant from device label."
+    },
+    "sub_variant_note": {
+      "type": "string",
+      "description": "Human-readable explanation when sub_variant_required is true."
+    },
+    "block_probe": {
+      "type": "object",
+      "description": "Per-block probe outcomes, keyed by block name.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": { "$ref": "#/$defs/BlockProbeResult" }
+      },
+      "additionalProperties": false
+    },
+    "cross_check": {
+      "type": "object",
+      "description": "Cross-check probe outcomes against alternative profiles' blocks. Keyed by '{profile_slug}.{block_name}'.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$": { "$ref": "#/$defs/CrossCheckResult" }
+      },
+      "additionalProperties": false
+    },
+    "reference_value_comparison": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ReferenceComparison" }
+    },
+    "sanity_warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/SanityWarning" }
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4]
+    },
+    "verdict": {
+      "type": "string",
+      "description": "Profile slug on success; 'no_match' / 'ambiguous' / 'connection_error' / 'config_error' on the failure paths."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "FingerprintResult": {
+      "type": "object",
+      "required": ["matched", "confidence", "reads"],
+      "additionalProperties": false,
+      "properties": {
+        "matched": { "type": "boolean" },
+        "confidence": {
+          "type": "string",
+          "enum": ["positive_fingerprint", "negative_fingerprint", "none"]
+        },
+        "reads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FingerprintRead" }
+        },
+        "skipped": { "type": "boolean" },
+        "skip_reason": { "type": "string" }
+      }
+    },
+    "FingerprintRead": {
+      "type": "object",
+      "required": ["address", "passed"],
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "oneOf": [
+            { "type": "string", "pattern": "^0x[0-9A-Fa-f]+$" },
+            { "type": "integer" }
+          ]
+        },
+        "expected": {},
+        "expected_range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "expected_contains": { "type": "string" },
+        "expect_exception": { "type": "integer" },
+        "result": {},
+        "passed": { "type": "boolean" },
+        "failure_reason": { "type": "string" }
+      }
+    },
+    "BlockProbeResult": {
+      "type": "object",
+      "required": ["readable"],
+      "additionalProperties": false,
+      "properties": {
+        "readable": { "type": "boolean" },
+        "metrics_total": { "type": "integer", "minimum": 0 },
+        "metrics_in_range": { "type": "integer", "minimum": 0 },
+        "metrics_out_of_range": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["metric", "value", "expected_range"],
+            "additionalProperties": false,
+            "properties": {
+              "metric": { "type": "string" },
+              "value": { "type": ["number", "string", "null"] },
+              "expected_range": {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "exception_code": {
+          "anyOf": [
+            { "type": "integer", "enum": [1, 2, 3, 4] },
+            { "type": "null" }
+          ]
+        },
+        "decode_error": { "type": "string" }
+      }
+    },
+    "CrossCheckResult": {
+      "type": "object",
+      "required": ["readable", "interpretation"],
+      "additionalProperties": false,
+      "properties": {
+        "readable": { "type": "boolean" },
+        "exception_code": {
+          "anyOf": [{ "type": "integer", "enum": [1, 2, 3, 4] }, { "type": "null" }]
+        },
+        "values_sensible": { "type": "boolean" },
+        "interpretation": {
+          "type": "string",
+          "description": "Human-readable summary, e.g. 'block_absent', 'block_responds_with_zeros — likely block_aliased_or_absent', 'block_readable_with_sensible_values — firmware likely aliases the blocks'."
+        }
+      }
+    },
+    "ReferenceComparison": {
+      "type": "object",
+      "required": ["metric", "decoded", "reference", "delta_pct", "agreement"],
+      "additionalProperties": false,
+      "properties": {
+        "metric": { "type": "string" },
+        "decoded": { "type": "number" },
+        "reference": { "type": "number" },
+        "delta_pct": { "type": "number" },
+        "agreement": { "type": "boolean" },
+        "likely_cause": {
+          "type": "string",
+          "description": "When delta indicates a known bug class (e.g. ~1000× scaling error suggests a missing scale: 0.001 in profile)."
+        }
+      }
+    },
+    "SanityWarning": {
+      "type": "object",
+      "required": ["severity", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "category": {
+          "type": "string",
+          "enum": ["idle_phase", "fast_read_mode", "reference_value_disagreement", "configuration", "communication"]
+        },
+        "metric": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}
