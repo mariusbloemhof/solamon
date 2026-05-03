@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Literal
 
+from .types import DecodeError, Reading, ValidationError
+
 
 @dataclass(frozen=True)
 class DeviceInfo:
@@ -103,6 +105,55 @@ class Profile:
     def schedule(self) -> Iterable[tuple[ReadBlock, float]]:
         for block in self.read_blocks:
             yield (block, block.cadence_s)
+
+    def decode(
+        self,
+        block_name: str,
+        response: bytes,
+        catalog: Any | None = None,
+        decoders: dict[str, Any] | None = None,
+    ) -> dict[str, Reading]:
+        """Decode an FC03/FC04 response into a dict keyed by logical metric name.
+
+        Pure function over the inputs; side-effect-free.
+        """
+        from .decoders import decode_format
+
+        block = next((b for b in self.read_blocks if b.name == block_name), None)
+        if block is None:
+            raise DecodeError(f"unknown block: {block_name}")
+        expected = block.length * 2
+        if len(response) != expected:
+            raise DecodeError(
+                f"block '{block_name}': response length {len(response)} != expected {expected}"
+            )
+        result: dict[str, Reading] = {}
+        for metric in block.metrics:
+            if metric.format == "custom":
+                if decoders is None or metric.decoder not in decoders:
+                    raise DecodeError(
+                        f"metric '{metric.logical}': decoder '{metric.decoder}' not provided"
+                    )
+                length_bytes = (metric.length or 1) * 2
+                value = decoders[metric.decoder].decode(response, metric.offset, length_bytes)
+                raw = None
+            elif metric.format == "ascii":
+                length_bytes = (metric.length or 0) * 2
+                value = decode_format(metric.format, response, metric.offset, length_bytes)
+                raw = None
+            else:
+                raw_value = decode_format(metric.format, response, metric.offset)
+                value = raw_value * metric.scale if isinstance(raw_value, (int, float)) else raw_value
+                raw = raw_value if isinstance(raw_value, int) else None
+            quality = "good"
+            if catalog is not None:
+                cm = catalog.get(metric.logical)
+                if cm is not None and cm.expected_range is not None and isinstance(value, (int, float)):
+                    lo, hi = cm.expected_range
+                    if value < lo or value > hi:
+                        quality = "uncertain"
+            result[metric.logical] = Reading(value=value, raw_value=raw, quality=quality)
+        return result
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Profile:
