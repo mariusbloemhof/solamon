@@ -3,7 +3,11 @@ from pathlib import Path
 import yaml
 
 from profile_loader.profile import (
-    ConnectionInfo, DeviceInfo, MetricMap, Profile, ReadBlock,
+    ConnectionInfo,
+    DeviceInfo,
+    MetricMap,
+    Profile,
+    ReadBlock,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

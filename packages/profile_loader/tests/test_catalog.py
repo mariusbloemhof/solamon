@@ -2,7 +2,6 @@ import yaml
 
 from profile_loader.catalog import Catalog, LogicalMetric
 
-
 SAMPLE = """
 active_power_total:
   label: "Total active power"

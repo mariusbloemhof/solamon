@@ -1,0 +1,36 @@
+name: Device library
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "packages/profile_loader/**"
+      - "architecture/**"
+      - "pyproject.toml"
+      - ".github/workflows/device-library.yml"
+  pull_request:
+    paths:
+      - "packages/profile_loader/**"
+      - "architecture/**"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install
+        run: python -m pip install -e "packages/profile_loader[dev]"
+      - name: Lint
+        run: python -m ruff check packages/profile_loader
+      - name: Tests
+        run: python -m pytest packages/profile_loader/tests -v
+      - name: Validate committed profile
+        run: python -m profile_loader validate architecture/profiles/acuvim_l.yaml

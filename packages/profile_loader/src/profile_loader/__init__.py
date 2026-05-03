@@ -2,11 +2,23 @@
 from .catalog import Catalog, LogicalMetric
 from .loader import ProfileLoader
 from .profile import (
-    ConnectionInfo, ControlSpec, DeviceInfo, Fingerprint, FingerprintIdentifier,
-    FingerprintRead, MetricMap, Profile, ReadbackRegister, ReadBlock,
+    ConnectionInfo,
+    ControlSpec,
+    DeviceInfo,
+    Fingerprint,
+    FingerprintIdentifier,
+    FingerprintRead,
+    MetricMap,
+    Profile,
+    ReadbackRegister,
+    ReadBlock,
 )
 from .types import (
-    DecodeError, FingerprintResult, ProfileLoadError, Reading, ValidationError,
+    DecodeError,
+    FingerprintResult,
+    ProfileLoadError,
+    Reading,
+    ValidationError,
 )
 
 __all__ = [

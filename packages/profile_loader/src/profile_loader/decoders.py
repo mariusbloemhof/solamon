@@ -5,8 +5,9 @@ Spec: docs/specs/device-library/profile-schema.md §6
 from __future__ import annotations
 
 import struct
-from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 
 class CustomDecoder(Protocol):
@@ -90,7 +91,7 @@ class AcuvimClockDecoder:
             raise ValueError(f"acuvim_clock requires 14 bytes, got {length_bytes}")
         y, mo, d, h, mi, s, _dow = struct.unpack_from(">7H", buffer, offset)
         try:
-            dt = datetime(y, mo, d, h, mi, s, tzinfo=timezone.utc)
+            dt = datetime(y, mo, d, h, mi, s, tzinfo=UTC)
         except ValueError as e:
             raise ValueError(f"acuvim_clock decode: {e}") from e
         return dt.isoformat(timespec="seconds").replace("+00:00", "Z")

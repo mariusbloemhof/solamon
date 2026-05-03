@@ -4,8 +4,9 @@ Spec: docs/specs/device-library/profile-schema.md
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 from .types import DecodeError, Reading, ValidationError
 
