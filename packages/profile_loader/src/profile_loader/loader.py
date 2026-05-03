@@ -1,0 +1,137 @@
+"""Top-level loader: parse + validate catalog and profiles.
+
+Spec: docs/specs/device-library/profile-schema.md §7-8
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import yaml
+from jsonschema import Draft202012Validator
+
+from .catalog import Catalog
+from .profile import Profile
+from .types import ProfileLoadError
+
+# Locate the architecture/ tree relative to this file.
+# packages/profile_loader/src/profile_loader/loader.py -> repo root is parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SCHEMAS = {
+    "catalog": REPO_ROOT / "architecture" / "logical_metrics.schema.json",
+    "profile": REPO_ROOT / "architecture" / "profiles" / "profile.schema.json",
+}
+
+FORMAT_BYTES: dict[str, int] = {
+    "float32_be": 4, "float32_le": 4, "float32_mb": 4,
+    "uint16": 2, "int16": 2, "word": 2,
+    "uint32_be": 4, "int32_be": 4, "dword_high_first": 4,
+    "ascii": 0, "custom": 0,
+}
+
+FORMAT_ALIGN: dict[str, int] = {
+    "float32_be": 4, "float32_le": 4, "float32_mb": 4,
+    "uint32_be": 4, "int32_be": 4, "dword_high_first": 4,
+    "uint16": 2, "int16": 2, "word": 2,
+    "ascii": 1, "custom": 1,
+}
+
+
+class ProfileLoader:
+    """Loads + validates profile YAMLs and the logical-metric catalog."""
+
+    def __init__(self) -> None:
+        from .decoders import default_registry
+        self._decoders = default_registry()
+
+    def register_decoder(self, name: str, decoder: Any) -> None:
+        self._decoders[name] = decoder
+
+    @property
+    def decoders(self) -> dict[str, Any]:
+        return self._decoders
+
+    def load_catalog(self, path: str | Path) -> Catalog:
+        path = Path(path)
+        raw = _load_yaml(path)
+        _validate_jsonschema(raw, SCHEMAS["catalog"], path)
+        return Catalog.from_dict(raw)
+
+    def load_profile(self, path: str | Path, catalog: Catalog) -> Profile:
+        path = Path(path)
+        raw = _load_yaml(path)
+        _validate_jsonschema(raw, SCHEMAS["profile"], path)
+        profile = Profile.from_dict(raw)
+        self._cross_validate(profile, catalog, path)
+        return profile
+
+    def _cross_validate(self, profile: Profile, catalog: Catalog, path: Path) -> None:
+        for block in profile.read_blocks:
+            block_byte_length = block.length * 2
+            for metric in block.metrics:
+                if catalog.get(metric.logical) is None:
+                    raise ProfileLoadError(
+                        f"{path}: read_block '{block.name}': metric '{metric.logical}' not in catalog"
+                    )
+                if metric.format not in FORMAT_BYTES:
+                    raise ProfileLoadError(
+                        f"{path}: metric '{metric.logical}': unknown format '{metric.format}'"
+                    )
+                align = FORMAT_ALIGN[metric.format]
+                if metric.offset % align != 0:
+                    raise ProfileLoadError(
+                        f"{path}: metric '{metric.logical}': offset {metric.offset} "
+                        f"violates {align}-byte alignment for format '{metric.format}'"
+                    )
+                if metric.format == "ascii":
+                    if metric.length is None:
+                        raise ProfileLoadError(
+                            f"{path}: metric '{metric.logical}': format 'ascii' requires 'length'"
+                        )
+                    end = metric.offset + (metric.length * 2)
+                elif metric.format == "custom":
+                    end = metric.offset + ((metric.length or 1) * 2)
+                else:
+                    end = metric.offset + FORMAT_BYTES[metric.format]
+                if end > block_byte_length:
+                    raise ProfileLoadError(
+                        f"{path}: metric '{metric.logical}': bytes {metric.offset}-{end} "
+                        f"exceeds block length {block_byte_length} bytes"
+                    )
+                if metric.format == "custom":
+                    if metric.decoder is None:
+                        raise ProfileLoadError(
+                            f"{path}: metric '{metric.logical}': format 'custom' requires 'decoder'"
+                        )
+                    if metric.decoder not in self._decoders:
+                        raise ProfileLoadError(
+                            f"{path}: metric '{metric.logical}': decoder '{metric.decoder}' not registered"
+                        )
+
+        for control_key in profile.control:
+            cm = catalog.get(control_key)
+            if cm is None:
+                raise ProfileLoadError(f"{path}: control '{control_key}' not in catalog")
+            if not cm.is_writable:
+                raise ProfileLoadError(f"{path}: control '{control_key}' not marked is_writable")
+
+
+def _load_yaml(path: Path) -> dict:
+    if not path.exists():
+        raise ProfileLoadError(f"file not found: {path}")
+    with path.open(encoding="utf-8") as f:
+        try:
+            return yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ProfileLoadError(f"{path}: YAML parse error: {e}") from e
+
+
+def _validate_jsonschema(raw: dict, schema_path: Path, source_path: Path) -> None:
+    with schema_path.open(encoding="utf-8") as f:
+        schema = json.load(f)
+    validator = Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(raw), key=lambda e: list(e.absolute_path))
+    if errors:
+        msgs = "; ".join(f"{list(e.absolute_path)}: {e.message}" for e in errors)
+        raise ProfileLoadError(f"{source_path}: schema violations: {msgs}")

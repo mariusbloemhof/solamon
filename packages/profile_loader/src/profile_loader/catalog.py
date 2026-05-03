@@ -22,7 +22,7 @@ class LogicalMetric:
     data_type: DataType
     category: Category
     is_cumulative: bool
-    expected_range: tuple[float, float]
+    expected_range: tuple[float, float] | None = None
     monotonic: bool | None = None
     direction_convention: str | None = None
     is_writable: bool = False
@@ -57,7 +57,7 @@ class Catalog:
                 data_type=entry["data_type"],
                 category=entry["category"],
                 is_cumulative=entry["is_cumulative"],
-                expected_range=tuple(entry["expected_range"]),
+                expected_range=tuple(entry["expected_range"]) if "expected_range" in entry else None,
                 monotonic=entry.get("monotonic"),
                 direction_convention=entry.get("direction_convention"),
                 is_writable=entry.get("is_writable", False),

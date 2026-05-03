@@ -1,5 +1,17 @@
-"""Solamon profile loader: parses logical-metric catalogs and device profiles
-shared between the edge agent, cloud ingestion, and probe CLI.
+"""Solamon profile loader."""
+from .catalog import Catalog, LogicalMetric
+from .loader import ProfileLoader
+from .profile import (
+    ConnectionInfo, ControlSpec, DeviceInfo, Fingerprint, FingerprintIdentifier,
+    FingerprintRead, MetricMap, Profile, ReadbackRegister, ReadBlock,
+)
+from .types import (
+    DecodeError, FingerprintResult, ProfileLoadError, Reading, ValidationError,
+)
 
-See docs/specs/device-library/ for the contracts.
-"""
+__all__ = [
+    "Catalog", "ConnectionInfo", "ControlSpec", "DecodeError", "DeviceInfo",
+    "Fingerprint", "FingerprintIdentifier", "FingerprintRead", "FingerprintResult",
+    "LogicalMetric", "MetricMap", "Profile", "ProfileLoadError", "ProfileLoader",
+    "ReadBlock", "ReadbackRegister", "Reading", "ValidationError",
+]
