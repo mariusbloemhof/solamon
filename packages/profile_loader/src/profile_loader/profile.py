@@ -176,6 +176,42 @@ class Profile:
                 f"value {value!r} not in allowed values {allowed} for '{logical_metric}'"
             )
 
+    async def fingerprint_match(self, client: Any, unit_id: int | None = None):
+        """Match device fingerprint via ModbusClient Protocol.
+
+        Returns FingerprintResult with match status, confidence, identifiers, and failures.
+        Lazy imports inside to avoid circular dependency with fingerprint.py.
+        """
+        from .fingerprint import evaluate_identifier, evaluate_read
+        from .types import FingerprintResult
+
+        slave_id = unit_id if unit_id is not None else self.connection.default_unit_id
+        failures: list[str] = []
+        used_negative = False
+
+        for read in self.fingerprint.reads:
+            if read.expect_exception is not None:
+                used_negative = True
+            ok, reason, _ = await evaluate_read(client, read, slave_id)
+            if not ok:
+                failures.append(f"@{read.address:#06x}: {reason}")
+
+        match = len(failures) == 0
+        confidence = (
+            "none" if not match
+            else ("negative_fingerprint" if used_negative else "positive")
+        )
+
+        identifiers: dict[str, Any] = {}
+        if match:
+            for ident in self.fingerprint.identifiers:
+                result = await evaluate_identifier(client, ident, slave_id)
+                if result is not None:
+                    identifiers[result[0]] = result[1]
+
+        return FingerprintResult(match=match, confidence=confidence,
+                                 identifiers=identifiers, failures=failures)
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Profile:
         device = DeviceInfo(**raw["device"])
