@@ -11,7 +11,7 @@ Login flow, session management, route protection, logout. Consumes the cloud's a
 
 | Concern | Choice |
 |---------|--------|
-| Auth library | **NextAuth (Auth.js v5)** Credentials provider |
+| Auth library | **NextAuth (Auth.js v5)** Credentials provider — pin a GA release in `package.json` (Auth.js v5 was in beta/RC for an extended window; verify the chosen version is on `latest`, not `next`/`beta`, before locking) |
 | Provider backend | FastAPI `POST /api/v1/auth/login` |
 | Session strategy | **JWT** (NextAuth stores the JWT in an HTTP-only encrypted cookie) |
 | Session lifetime | 24 hours, matching FastAPI's JWT TTL |
@@ -95,33 +95,54 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
 Every server-side fetch and every client-side fetch attaches the access token from the session.
 
-### 3.1 Server-side fetch
+Both `apiServer` and `apiClient` return an **SDK-shaped** object — the typed methods are generated from the cloud's OpenAPI by `openapi-typescript` (see [`live-data.md`](live-data.md) §10). The internal fetch wrapper is shared but never exported directly: every call goes through a typed method like `apiServer(session).getSite(slug)`.
 
 ```typescript
 // lib/api-client.ts
-import { auth } from "@/auth";
+import createClient, { type Client } from "openapi-fetch";
+import type { paths } from "./api-schema";
 
-export async function apiServer<T>(path: string, init?: RequestInit): Promise<T> {
-  const session = await auth();
-  if (!session?.accessToken) throw new Error("not_authenticated");
+function buildClient(accessToken: string): Client<paths> {
+  const base = createClient<paths>({ baseUrl: `${API_BASE}/api/v1` });
 
-  const res = await fetch(`${API_BASE}/api/v1${path}`, {
-    ...init,
-    headers: {
-      ...init?.headers,
-      authorization: `Bearer ${session.accessToken}`,
+  base.use({
+    onRequest({ request }) {
+      request.headers.set("authorization", `Bearer ${accessToken}`);
+      return request;
+    },
+    onResponse({ response }) {
+      if (response.status === 401) {
+        // Server context: throw a typed error and let the page's redirect helper take over.
+        // Client context: redirect immediately.
+        throw new SessionExpiredError();
+      }
+      return response;
     },
   });
-  if (res.status === 401) {
-    // Session expired — redirect to /login
-    redirect("/login?callbackUrl=" + encodeURIComponent(currentUrl()));
-  }
-  if (!res.ok) throw new ApiError(res.status, await res.text());
-  return res.json();
+
+  return base;
 }
 ```
 
-### 3.2 Client-side fetch
+### 3.1 Server-side use
+
+```typescript
+import { auth } from "@/auth";
+
+export async function apiServer() {
+  const session = await auth();
+  if (!session?.accessToken) redirect("/login");
+  return buildClient(session.accessToken);
+}
+
+// Usage from a page:
+const client = await apiServer();
+const { data: site } = await client.GET("/sites/{slug}", { params: { path: { slug } } });
+```
+
+The page calls `await apiServer()` once and passes the client into `Promise.all` for parallel fetches. (Earlier drafts of this spec showed `apiServer<T>(path, init)` as a generic fetch wrapper — superseded by the SDK shape above.)
+
+### 3.2 Client-side use
 
 ```typescript
 "use client";
@@ -129,25 +150,22 @@ import { useSession } from "next-auth/react";
 
 export function useApiClient() {
   const { data: session } = useSession();
-  return useMemo(() => ({
-    fetch: async <T,>(path: string, init?: RequestInit): Promise<T> => {
-      const res = await fetch(`${API_BASE}/api/v1${path}`, {
-        ...init,
-        headers: {
-          ...init?.headers,
-          authorization: `Bearer ${session?.accessToken ?? ""}`,
-        },
-      });
-      if (res.status === 401) {
-        // Redirect to login
-        window.location.href = "/login?callbackUrl=" + encodeURIComponent(window.location.pathname);
-      }
-      if (!res.ok) throw new ApiError(res.status, await res.text());
-      return res.json();
-    },
-  }), [session?.accessToken]);
+  return useMemo(
+    () => session?.accessToken ? buildClient(session.accessToken) : null,
+    [session?.accessToken]
+  );
 }
+
+// Usage in a client component:
+const client = useApiClient();
+const { data: snapshot } = useQuery({
+  queryKey: ["snapshot", device_id],
+  queryFn: () => client!.GET("/sites/{slug}/devices/{device_id}/snapshot", { ... }).then(r => r.data),
+  enabled: !!client,
+});
 ```
+
+A 401 from any client-side call triggers `window.location.href = "/login?callbackUrl=" + encodeURIComponent(window.location.pathname)` (the `onResponse` interceptor catches the SessionExpiredError and routes there).
 
 ### 3.3 WebSocket auth
 
@@ -242,11 +260,16 @@ NextAuth's `expiresAt` field on the session is also checked client-side — if `
 - The access token is never logged; the `signIn` failure path doesn't echo the password back.
 - The login form uses `autocomplete="current-password"` so password managers work; doesn't use `autocomplete="off"` (which is widely understood to be hostile).
 
+**XSS exposes the access token.** The session callback exposes `session.accessToken` to client components via `useSession()` — required for `apiClient` and `<WebSocket>` auth. An XSS that lands in any rendered surface (e.g., a Tremor tooltip rendering unsanitised user-supplied content in a future feature) can read `useSession().data.accessToken` and call any API endpoint as the operator. The standard mitigation (HttpOnly cookies for auth) is incompatible with the `Sec-WebSocket-Protocol` mechanism (the JS *needs* the token in memory to construct the WS). For MVP single-tenant single-admin with no untrusted-input render paths this is acceptable; **before adding any feature that renders unsanitised content** (operator notes, comments, free-text fields), revisit. Mitigations short of a full HttpOnly migration: a strict CSP (`default-src 'self'; script-src 'self'`), `dangerouslySetInnerHTML` audit, sanitiser-by-default (DOMPurify or React's auto-escaping never bypassed).
+
+**Clock skew.** The proactive `Date.now() > session.expiresAt` check in §6 trusts the client clock. A client whose clock is wrong by more than the session TTL (24 h) will either redirect-to-login when the session is actually valid, or skip the proactive redirect and fail on the next API call. Acceptable for MVP; not a security issue (the server validates JWT exp independently). Document that the proactive redirect is a UX nicety, not a security boundary.
+
 ## 8. MVP-only constraints
 
 - **Single shared admin user** in MVP. No invite flow, no signup, no password reset, no MFA. Marius and Johan share the credentials. When multi-user / RBAC arrives (post-MVP), this layer expands but the NextAuth + Credentials shape stays.
 - **Plaintext password in the request body** (over TLS). Cloud-side stores bcrypt hash; the wire transmission is the standard pattern. mTLS / passkeys / SSO are post-MVP.
 - **24-hour session.** Long enough to cover a working day without re-login; short enough that a forgotten laptop doesn't stay logged in indefinitely.
+- **No login rate-limiting in MVP.** Neither NextAuth nor the cloud's `POST /auth/login` enforces a per-IP or per-account limit (cloud review #6 also flagged this absence cloud-side). With a single shared admin password and a public login URL, an attacker who phishes the URL can brute-force at HTTP latency. Acceptable for the MVP single-tenant deployment; add rate-limiting at Caddy (per-IP `rate_limit` directive) or in FastAPI middleware before adding any second tenant.
 
 ## 9. Acceptance criteria
 

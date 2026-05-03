@@ -294,6 +294,7 @@ paths:
   # Auth
   /auth/login:
     post:
+      operationId: login
       tags: [auth]
       summary: Login with email + password
       requestBody:
@@ -310,6 +311,7 @@ paths:
 
   /auth/logout:
     post:
+      operationId: logout
       tags: [auth]
       summary: Logout (no-op in MVP — no auth required)
       security: []
@@ -318,6 +320,7 @@ paths:
 
   /auth/me:
     get:
+      operationId: getCurrentUser
       tags: [auth]
       summary: Current user
       security: [{ bearerAuth: [] }]
@@ -331,6 +334,7 @@ paths:
   # Sites & devices
   /sites:
     get:
+      operationId: listSites
       tags: [sites]
       summary: List sites visible to the current user
       security: [{ bearerAuth: [] }]
@@ -345,6 +349,7 @@ paths:
 
   /sites/{slug}:
     get:
+      operationId: getSite
       tags: [sites]
       summary: Site detail with devices and health
       security: [{ bearerAuth: [] }]
@@ -359,6 +364,7 @@ paths:
 
   /sites/{slug}/devices:
     get:
+      operationId: listDevices
       tags: [devices]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -374,6 +380,7 @@ paths:
 
   /sites/{slug}/devices/{device_id}:
     get:
+      operationId: getDevice
       tags: [devices]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -388,6 +395,7 @@ paths:
 
   /sites/{slug}/devices/{device_id}/snapshot:
     get:
+      operationId: getDeviceSnapshot
       tags: [telemetry]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -402,6 +410,7 @@ paths:
 
   /sites/{slug}/devices/{device_id}/readings:
     get:
+      operationId: getDeviceReadings
       tags: [telemetry]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -422,12 +431,14 @@ paths:
   # Control
   /sites/{slug}/devices/{device_id}/commands:
     get:
+      operationId: listCommands
       tags: [control]
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
         - { name: device_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 500 } }
+        - { name: cursor, in: query, schema: { type: string } }
       responses:
         "200":
           description: OK
@@ -437,6 +448,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/ControlCommand" }
     post:
+      operationId: postCommand
       tags: [control]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -449,7 +461,7 @@ paths:
             schema: { $ref: "#/components/schemas/CommandIssue" }
       responses:
         "202":
-          description: Accepted
+          description: Accepted — command persisted; status reflects publish outcome
           headers:
             Location:
               schema: { type: string }
@@ -461,9 +473,18 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: |
+            Broker unreachable beyond bounded retry budget. Command row exists at
+            status=pending; background worker continues retrying until expires_at.
+            Web UI surfaces this as a "broker unreachable" toast.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /commands/{id}:
     get:
+      operationId: getCommand
       tags: [control]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -478,6 +499,7 @@ paths:
   # Catalog
   /metrics-catalog:
     get:
+      operationId: listMetricsCatalog
       tags: [catalog]
       security: [{ bearerAuth: [] }]
       responses:
@@ -491,6 +513,7 @@ paths:
 
   /device-profiles:
     get:
+      operationId: listDeviceProfiles
       tags: [catalog]
       security: [{ bearerAuth: [] }]
       responses:
@@ -504,6 +527,7 @@ paths:
 
   /device-profiles/{profile_slug}:
     get:
+      operationId: getDeviceProfile
       tags: [catalog]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -518,6 +542,7 @@ paths:
   # Edge bootstrap
   /edge/config/{site_slug}:
     get:
+      operationId: getEdgeConfig
       tags: [edge]
       security: [{ edgeAuth: [] }]
       parameters:
@@ -532,6 +557,7 @@ paths:
   # Health (note: paths are auto-prefixed with /api/v1 by the server URL above)
   /health:
     get:
+      operationId: getHealth
       tags: [health]
       summary: Liveness probe (unauthenticated; resolves to /api/v1/health)
       security: []
@@ -544,6 +570,7 @@ paths:
 
   /sites/{slug}/health:
     get:
+      operationId: getSiteHealth
       tags: [health]
       security: [{ bearerAuth: [] }]
       parameters:

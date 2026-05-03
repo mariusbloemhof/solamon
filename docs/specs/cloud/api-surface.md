@@ -220,7 +220,25 @@ Both paths sit under `/api/v1/` for consistency. Caddy routes `/api/v1/health` d
 
 ### 5.1 Live device stream — `/api/v1/ws/sites/{slug}/devices/{device_id}/live`
 
-After authentication (JWT in the `Sec-WebSocket-Protocol` header **only** — the `?token=` query string variant is explicitly disallowed because URLs leak to access logs / browser history / proxy logs / monitoring), the server subscribes the connection to live telemetry and snapshot updates for the device.
+**Authentication.** JWT goes in the `Sec-WebSocket-Protocol` header **only** — the `?token=` query string variant is explicitly disallowed because URLs leak to access logs / browser history / proxy logs / monitoring.
+
+The header carries two protocol strings (per RFC 6455 + browser WebSocket constructor convention):
+
+```
+Sec-WebSocket-Protocol: solamon-bearer, <jwt-token>
+```
+
+Server-side parse rules:
+
+1. The header value is a comma-separated list of subprotocol identifiers. Split on `,` then strip whitespace.
+2. The list MUST contain exactly two entries.
+3. The first entry MUST be the literal string `solamon-bearer`. Any other value → close with code 1002 (protocol error).
+4. The second entry is the JWT. Validate it with the same rules as a `Authorization: Bearer …` HTTP header (signature, expiry, audience, issuer).
+5. If JWT validation fails (invalid signature, expired, missing required claims) → close with code 1008 (policy violation) and a close-reason of `auth_failed`.
+6. On success, the server completes the WebSocket handshake echoing back **only** `solamon-bearer` as the negotiated subprotocol — the JWT MUST NOT be echoed in the response (it would land in any client-side proxy log).
+7. On any subsequent server-side error mid-session, prefer close code 1011 (server error) or 1012 (service restart). Web-ui treats 1006/1011/1012 as transient (auto-reconnect) and 1008 as a hard auth failure (redirect to `/login`); see [`../web-ui/live-data.md`](../web-ui/live-data.md) §4.1.
+
+**Log redaction.** The `Sec-WebSocket-Protocol` request header carries the bearer in plaintext. FastAPI request-logging middleware MUST skip this header; Caddy access logs MUST redact it (per [`../infrastructure/caddy-and-dns.md`](../infrastructure/caddy-and-dns.md) §3).
 
 **Server → client messages:**
 
@@ -246,9 +264,13 @@ After authentication (JWT in the `Sec-WebSocket-Protocol` header **only** — th
 ```json
 {
   "type": "heartbeat",
-  "data": { "status": "online", "last_modbus_success": "...", "buffer_depth_seconds": 0 }
+  "data": { "status": "online", "last_modbus_success": "...", "buffer_depth_seconds": 0, "halted_blocks": [] }
 }
 ```
+
+The `snapshot` message carries the **full post-merge snapshot state** — every metric the cloud has for the device, not a delta of what changed in the last upsert. This is the contract the web-ui relies on (per [`../web-ui/live-data.md`](../web-ui/live-data.md) §3, the dashboard handler does `setQueryData(["snapshot", id], msg.data)` — a replace). The ingestion worker reads the merged row from `app.device_snapshot` after the upsert and broadcasts that row's `metrics` JSONB; never pushes a partial.
+
+**Enum / categorical metrics in snapshot.** The cloud resolves enum metrics to their **string symbolic form** before serving (e.g., `current_wiring_type: "3CT"`, not `0`). The integer code from the wire never reaches the WS message; the resolution happens in the snapshot upsert path. Web-ui renders the string directly. The `app.logical_metric.enum_values` map is reserved for the cloud's own resolution path and the admin profile-detail view.
 
 **Client → server messages:** none in MVP. Subscriptions are inferred from the URL.
 

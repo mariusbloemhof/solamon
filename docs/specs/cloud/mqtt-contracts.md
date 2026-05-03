@@ -132,9 +132,14 @@ Direction: Pi → cloud. Published every 60 s on a healthy connection. Retain fl
   "edge_version": "0.1.0",
   "buffer_depth_seconds": 0,
   "last_modbus_success": "2026-05-02T12:34:55.123Z",
-  "modbus_errors_per_minute": 0
+  "modbus_errors_per_minute": 0,
+  "halted_blocks": []
 }
 ```
+
+`halted_blocks` is the list of read-block names the edge agent has stopped polling because they hit the consecutive-failure threshold defined in `../edge-agent/modbus-poller.md §5` (e.g., `["energy"]` after 10 straight bad reads on the energy block; empty when nothing is halted). The edge always publishes the field per `../edge-agent/mqtt-publisher.md §7`. The `EdgeHealthCard` in `../web-ui/components.md` renders it as the "halted blocks" line.
+
+There is no `"fault"` heartbeat status in MVP — when fingerprint mismatch or block-halt happens, the agent stays online and signals the issue via `halted_blocks`. See `../edge-agent/mqtt-publisher.md §7.2`.
 
 ### 5.2 Payload (LWT, published by broker on disconnect)
 

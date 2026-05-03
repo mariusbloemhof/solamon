@@ -105,23 +105,31 @@ export function PowerHeroTile({ device_id, initial }: Props) {
     staleTime: 30_000,
   });
 
-  // WebSocket pushes update the same query
+  // WebSocket pushes update the same query.
+  // Note: handlers receive the FULL envelope (`{type, data: {...}}`) — fields live
+  // under `msg.data`, not at the top level (the dispatcher in §4 unpacks by `msg.type`
+  // and forwards the whole envelope, not the inner payload).
   useDeviceLiveStream(device_id, {
     onReading: (msg) => {
-      if (msg.metric === "active_power_total") {
+      if (msg.data.metric === "active_power_total") {
         queryClient.setQueryData(["snapshot", device_id], (prev) => ({
           ...prev,
-          metrics: { ...prev.metrics, active_power_total: msg.value },
-          snapshot_time: msg.time,
+          metrics: { ...prev.metrics, active_power_total: msg.data.value },
+          snapshot_time: msg.data.time,
         }));
       }
     },
     onSnapshot: (msg) => {
+      // The cloud sends the FULL post-merge snapshot state on every snapshot
+      // message (per cloud/api-surface.md §5.1) — so a replace is safe.
       queryClient.setQueryData(["snapshot", device_id], msg.data);
     },
   });
 
   const value = data?.metrics?.active_power_total ?? null;
+  // `value` arrives in the catalog unit (kW for power) — the device profile's
+  // `scale: 0.001` on power metrics has already converted W → kW upstream
+  // (see device-library/acuvim-l-profile.md §3). Don't multiply again here.
   return <Metric value={formatKw(value)} sparkline={...} />;
 }
 ```
@@ -130,59 +138,118 @@ The pattern is consistent across cards: TanStack Query owns the cached value; th
 
 ## 4. The WebSocket hook
 
+The hook is a **thin subscriber over a singleton connection pool** keyed by `device_id`. A dashboard with 12 cards subscribing to the same device opens **one** WebSocket connection, not 12 — the acceptance criterion in §8 is built on this.
+
 ```typescript
 // lib/ws-client.ts
 "use client";
 
-export function useDeviceLiveStream(
-  device_id: string,
-  handlers: {
-    onReading?: (msg: ReadingMessage) => void;
-    onSnapshot?: (msg: SnapshotMessage) => void;
-    onHeartbeat?: (msg: HeartbeatMessage) => void;
+// Module-level singleton: one entry per device_id, reference-counted.
+type Subscriber = {
+  onReading?: (msg: ReadingMessage) => void;
+  onSnapshot?: (msg: SnapshotMessage) => void;
+  onHeartbeat?: (msg: HeartbeatMessage) => void;
+};
+
+type PoolEntry = {
+  ws: WebSocket;
+  subscribers: Set<Subscriber>;
+  refCount: number;
+  // Reconnect state, last-known-token, etc.
+};
+
+const pool = new Map<string, PoolEntry>();
+
+function acquire(device_id: string, token: string, subscriber: Subscriber): () => void {
+  let entry = pool.get(device_id);
+  if (!entry) {
+    entry = openConnection(device_id, token);
+    pool.set(device_id, entry);
   }
-) {
+  entry.subscribers.add(subscriber);
+  entry.refCount += 1;
+
+  return () => {
+    entry!.subscribers.delete(subscriber);
+    entry!.refCount -= 1;
+    if (entry!.refCount === 0) {
+      entry!.ws.close();
+      pool.delete(device_id);
+    }
+  };
+}
+
+function openConnection(device_id: string, token: string): PoolEntry {
+  const url = `${WS_BASE}/sites/${slug}/devices/${device_id}/live`;
+  // JWT goes via Sec-WebSocket-Protocol header per cloud/api-surface.md §5.1.
+  // Browser WebSocket API repurposes the constructor's `protocols` arg for this.
+  const ws = new WebSocket(url, ["solamon-bearer", token]);
+  const entry: PoolEntry = { ws, subscribers: new Set(), refCount: 0 };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    for (const sub of entry.subscribers) {
+      switch (msg.type) {
+        case "reading":   sub.onReading?.(msg);   break;
+        case "snapshot":  sub.onSnapshot?.(msg);  break;
+        case "heartbeat": sub.onHeartbeat?.(msg); break;
+      }
+    }
+  };
+
+  ws.onclose = (event) => {
+    // See §4.1 for close-code semantics + reconnect policy.
+    scheduleReconnect(device_id, token, event.code);
+  };
+
+  return entry;
+}
+
+export function useDeviceLiveStream(device_id: string, handlers: Subscriber) {
   const session = useSession();
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;       // always use latest handlers without re-subscribing
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.accessToken) return;
 
-    const url = `${WS_BASE}/sites/${slug}/devices/${device_id}/live`;
-
-    // JWT goes via Sec-WebSocket-Protocol header per cloud spec §5.1
-    // The browser WebSocket constructor's "protocols" arg is repurposed for this.
-    const ws = new WebSocket(url, ["solamon-bearer", session.token]);
-
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      switch (msg.type) {
-        case "reading":   handlersRef.current.onReading?.(msg);   break;
-        case "snapshot":  handlersRef.current.onSnapshot?.(msg);  break;
-        case "heartbeat": handlersRef.current.onHeartbeat?.(msg); break;
-      }
+    // The subscriber forwards into the always-current handlersRef so a re-render
+    // with new handler functions does not require a new WS connection.
+    const subscriber: Subscriber = {
+      onReading:   (m) => handlersRef.current.onReading?.(m),
+      onSnapshot:  (m) => handlersRef.current.onSnapshot?.(m),
+      onHeartbeat: (m) => handlersRef.current.onHeartbeat?.(m),
     };
 
-    ws.onclose = () => {
-      // Auto-reconnect with exponential backoff via a wrapper
-    };
-
-    return () => ws.close();
-  }, [device_id, session?.token]);
+    return acquire(device_id, session.accessToken, subscriber);
+  }, [device_id, session?.accessToken]);
 }
 ```
 
-### 4.1 Reconnection
+### 4.1 Reconnection + close codes
 
-The hook wraps the raw WebSocket in a small reconnect helper that:
-- On `onclose` (not initiated by component unmount), waits with exponential backoff (1 s, 2 s, 4 s, 8 s, 16 s, capped at 30 s).
-- On reconnect, re-runs the connection setup.
-- Surfaces connection state via a context (`<ConnectionPill>` in the AppShell renders it).
+`onclose` triggers a reconnect unless the close was a deliberate teardown (last subscriber unmounted) or an auth failure (close code 1008 — see §4.4). Backoff: 1 s, 2 s, 4 s, 8 s, 16 s, capped at 30 s; reset on successful re-open.
+
+| Close code | Meaning | Reconnect? |
+|------------|---------|-----------|
+| 1000 | Normal closure (component unmount, last unsubscribe) | No |
+| 1006 | Abnormal closure (network drop, broker restart) | Yes — exponential backoff |
+| 1008 | Policy violation — JWT invalid / expired | No — trigger session-expiry path (§4.4) |
+| 1011 | Server internal error | Yes — exponential backoff |
+| 1012 | Service restart | Yes — short backoff (server is rolling) |
+| other | Treat as 1006 | Yes — exponential backoff |
+
+Connection state is surfaced via a context (`<ConnectionPill>` in the AppShell renders it).
+
+### 4.4 Token rotation across reconnects
+
+The `useEffect` dependency array is `[device_id, session?.accessToken]`. NextAuth refreshes `session.accessToken` on its own cadence; React re-renders, the `acquire` cleanup runs (decrementing refCount; tearing down the WS only if this was the last subscriber), and a new `acquire` runs with the fresh token. Within a single reconnect cycle the closure already holds the token at the time the WS opened — that's fine because the auth handshake happens at WS open, not on every message. If a reconnect happens *during* a token rotation, the next render closes the stale WS and opens a new one with the fresh token.
+
+A close code of 1008 (auth failure) bypasses the auto-reconnect and instead triggers the session-expiry path (per [`auth.md`](auth.md) §6 step 3): a session refresh check; if the session is genuinely expired, redirect to `/login`.
 
 ### 4.2 Sec-WebSocket-Protocol auth
 
-Per [`../cloud/api-surface.md`](../cloud/api-surface.md) §5.1: JWT goes in the `Sec-WebSocket-Protocol` header **only** — the `?token=` query string variant was removed because URLs leak to logs.
+Per [`../cloud/api-surface.md`](../cloud/api-surface.md) §5.1: JWT goes in the `Sec-WebSocket-Protocol` header **only** — the `?token=` query string variant is explicitly disallowed because URLs leak to logs.
 
 The browser's WebSocket API uses the constructor's `protocols` argument for this header:
 
@@ -190,13 +257,13 @@ The browser's WebSocket API uses the constructor's `protocols` argument for this
 new WebSocket(url, ["solamon-bearer", token]);
 ```
 
-The first protocol string identifies the auth scheme (server validates it's `solamon-bearer`); the second carries the bearer. The server-side FastAPI WS handler reads the Sec-WebSocket-Protocol header, extracts the second value, validates as JWT, and either accepts (echoing one of the protocols back) or rejects (close with code 1008 / "policy violation").
+The first protocol string identifies the auth scheme (server validates it's `solamon-bearer`); the second carries the bearer. The server-side FastAPI WS handler reads the `Sec-WebSocket-Protocol` header, extracts the second value, validates as JWT, and either accepts (echoing `solamon-bearer` back as the negotiated subprotocol per RFC 6455) or rejects (close with code 1008 / "policy violation").
+
+**Log redaction.** The `Sec-WebSocket-Protocol` request header carries the bearer token in plaintext. Caddy's default access-log format captures all request headers — meaning JWTs would land in `/var/log/caddy/access.log`. The Caddyfile MUST redact this header in the `log` block (see [`../infrastructure/caddy-and-dns.md`](../infrastructure/caddy-and-dns.md) §3 — covered there as part of the redaction policy). Treat any backend log retention path as part of the secret's access boundary regardless: even with redaction, FastAPI's own request-logging middleware must skip this header.
 
 ### 4.3 Multiple subscribers, one connection
 
-Multiple cards on the dashboard all subscribe to the same device's live stream. The hook implements **subscription multiplexing**: the first call opens the WebSocket and registers the handler; subsequent calls with the same `device_id` reuse the connection and add their handlers. The connection closes when the last subscriber unmounts.
-
-Implementation pattern: a singleton WebSocket pool keyed by `device_id`, with reference counting.
+Implemented in §4 above as a module-level singleton pool keyed by `device_id`, with reference counting. Multiple cards on the dashboard subscribe to the same device's live stream and share **one** WebSocket; the connection closes when the last subscriber unmounts. Verified by the §8 acceptance criterion.
 
 ## 5. Mutations (control commands)
 
@@ -218,18 +285,18 @@ const issueMutation = useMutation({
 });
 ```
 
-The 202 response carries the persisted `ControlCommand` (with `status='sent'` on the happy path or `'pending'` with `last_publish_error` if the broker had transient trouble — see cloud spec §3.4). The UI inspects status and either:
+The 202 response carries the persisted `ControlCommand` (per [`../cloud/control-relay.md`](../cloud/control-relay.md) §3 — `status='sent'` on the happy path, or `'pending'` with `last_publish_error` populated if the broker had transient trouble during the cloud's bounded publish-retry window). The UI inspects status and either:
 
 - Shows the command in the live-status panel and opens `/ws/commands/{id}/live` to track transitions.
 - Renders the `last_publish_error` and offers a "Retry" button (which re-issues with the same params; the cloud's background retry might land in the meantime).
 
-The `503 Service Unavailable` path renders a more prominent error toast: "Cloud broker unreachable; command saved at `pending` and will retry. Check `/sites/{slug}/control` later for status."
+The `503 Service Unavailable` path (per [`../cloud/api-surface.md`](../cloud/api-surface.md) §4.4) renders a more prominent error toast: "Cloud broker unreachable; command saved at `pending` and will retry. Check `/sites/{slug}/control` later for status."
 
 ## 6. Cross-cutting UX patterns
 
 ### 6.1 Stale data indicators
 
-Every live card has an internal `lastUpdate` state. If `Date.now() - lastUpdate > 30_000` the card renders a small "stale" indicator (amber dot + "30s ago" text). The user knows the value isn't current.
+Every live card has an internal `lastUpdate` state. If `Date.now() - lastUpdate > 30_000` the card renders a small "stale" indicator (amber dot + "30s ago" text). The user knows the value isn't current. This is the same behaviour as `<DataFreshness>` in [`components.md`](components.md) §4 — `<DataFreshness>` is the visible component; this paragraph describes the underlying state hook the cards use to drive it.
 
 This works even when the WS is connected but no readings have arrived (e.g., the Pi's Modbus poll is failing; only heartbeats are coming through).
 
@@ -269,27 +336,62 @@ Every page has `loading.tsx` and every card has a built-in skeleton state (when 
 
 ## 7. Performance budgets
 
-| Metric | Target |
-|--------|--------|
-| First Contentful Paint | < 1 s on a 4 G connection (Lighthouse mobile profile) |
-| Time to Interactive | < 2 s |
-| Bundle size (initial) | < 250 kB gzipped — Tremor + Recharts + shadcn primitives is the bulk; we accept this in MVP |
-| Live render lag | ~50 ms from WS message receipt to React re-render |
-| Memory growth over 1 hour of dashboard view | < 20 MB (no listener / WS leaks) |
+Bundle measurements are first-load JS for `/sites/{slug}` (the heaviest route) on the production build, gzipped, post-tree-shake. Numbers are **realistic with code-splitting in place** — Tremor + Recharts + shadcn primitives + the Next.js runtime would otherwise blow well past 250 kB on their own.
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| First Contentful Paint | < 1 s on a 4 G connection (Lighthouse mobile profile) | Server-rendered HTML reaches browser fast; Tremor hydration is the long-tail |
+| Time to Interactive | < 2 s | |
+| First-load JS, dashboard route | < 350 kB gzipped | Includes Tremor + Recharts + the WS hook. The 250 kB number from earlier drafts was aspirational; 350 kB is the realistic budget once the chart libraries land. |
+| First-load JS, login + admin routes | < 150 kB gzipped | Routes that don't pull in Tremor/Recharts |
+| Live render lag | ~50 ms from WS message receipt to React re-render | |
+| Memory growth over 1 hour of dashboard view | < 20 MB | No listener / WS / chart-instance leaks |
+
+**Code-splitting is mandatory, not optional**:
+
+- The admin profile detail page (`/admin/profiles/{slug}`) lazy-loads `react-syntax-highlighter` via `next/dynamic`. Next.js's default route-level splitting moves it to a separate chunk; verify with `next build`'s bundle output that the dashboard route doesn't pull it in.
+- Recharts is imported once at the chart components — not at the page boundary — so routes without charts don't pay for it.
+- Tremor sub-imports use `import { LineChart } from "@tremor/react"` (the package's modern export map is per-component); avoid `import * as Tremor` which defeats tree-shaking.
 
 ## 8. Acceptance criteria
 
-- Initial dashboard render shows real numeric values (not placeholders) within 200 ms of nav (server-rendered).
+- Initial dashboard render shows real numeric values (not placeholders) at first paint when served from the same region as the user (Caddy on EC2 in af-south-1 → SA-based admin laptop is the bench scenario; round-trip < 100 ms). Cross-region or slow-link operation softens to "first values visible within 1 s of nav".
 - WebSocket connects within 1 s of mount; first live update visible within the next reading cycle (worst case 10 s).
 - Subscribing to the same device from multiple cards opens exactly **one** WebSocket connection (verified via DevTools network tab).
 - Killing the network for 60 s, then restoring → reconnect happens within 30 s and the dashboard catches up.
 - Issuing a control command shows the optimistic `pending` state within 50 ms of click; transitions through `sent → confirmed` driven by WS messages.
-- Bundle size stays under budget; if Tremor + Recharts pushes us over, prune chart imports or switch to bare Recharts for the chart-heavy paths.
+- Bundle sizes stay under budget per route per `next build` output; if Tremor/Recharts grows in a future minor update, lazy-load `<LoadProfileChart>` via `next/dynamic` to keep the initial dashboard chunk under 350 kB.
 
-## 9. Cross-references
+## 9. Configuration
+
+| Env var | Used by | Example |
+|---------|---------|---------|
+| `NEXT_PUBLIC_API_BASE` | All HTTP fetches (`apiServer`, `apiClient`, NextAuth Credentials provider) | `https://cloud.solamon.bloemhof.dev` |
+| `NEXT_PUBLIC_WS_BASE` | WebSocket connections | `wss://cloud.solamon.bloemhof.dev/api/v1/ws` |
+| `NEXTAUTH_SECRET` | NextAuth cookie encryption key (server-only) | 32-byte random hex |
+| `NEXTAUTH_URL` | Public origin used by NextAuth callbacks | `https://cloud.solamon.bloemhof.dev` |
+
+`NEXT_PUBLIC_*` env vars are inlined at build time and are visible in client bundles — never put a secret here. The `WS_BASE` and `API_BASE` references throughout this document resolve to these env vars at runtime.
+
+## 10. SDK build pipeline
+
+The TypeScript SDK is regenerated from the cloud's OpenAPI spec on every `npm run build`:
+
+```bash
+# package.json scripts:
+"prebuild": "openapi-typescript ${API_BASE}/api/v1/openapi.json -o lib/api-schema.ts",
+"build": "next build"
+```
+
+Local dev: developers run `npm run prebuild` whenever the cloud spec changes (or use `--watch` against a local cloud). CI: pipeline pulls the schema from the cloud's `/openapi.json` once at build start.
+
+The SDK exposes named methods derived from each operation's `operationId` in `openapi.yaml` — operationIds are required for stable method names (e.g., `apiClient.getDeviceSnapshot`); without them `openapi-typescript` falls back to path-derived anonymous functions. See [`../cloud/openapi.yaml`](../cloud/openapi.yaml) — every path declares an explicit `operationId`.
+
+## 11. Cross-references
 
 - [`pages.md`](pages.md) — pages that consume these patterns
 - [`components.md`](components.md) — `<ConnectionPill>`, `<DataFreshness>`, `<RelativeTime>`
 - [`auth.md`](auth.md) — session token used in WS auth
 - [`../cloud/api-surface.md`](../cloud/api-surface.md) §5 — WebSocket contract
 - [`../cloud/control-relay.md`](../cloud/control-relay.md) — the state machine the live-stream messages drive
+- [`../infrastructure/caddy-and-dns.md`](../infrastructure/caddy-and-dns.md) §3 — `Sec-WebSocket-Protocol` log redaction

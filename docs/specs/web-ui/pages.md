@@ -181,7 +181,7 @@ Implemented as a shared `AppShell` server component in `app/layout.tsx`. Per-pag
 │  │ ✓ Confirmed (read-back: 30 min)  14:32:03                        │    │
 │  └──────────────────────────────────────────────────────────────────┘    │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  Last 20 commands (table, paginated)                                     │
+│  Last 20 commands (table, "Load more" cursor-paginated)                  │
 │  Time          User    Type                Param   Status   Read-back   │
 │  14:32         Marius  set_demand_window   30      ✓        30          │
 │  14:15         Marius  set_demand_window   15      ✓        15          │
@@ -223,12 +223,12 @@ Implemented as a shared `AppShell` server component in `app/layout.tsx`. Per-pag
 **Layout:** tabbed interface:
 - **Overview** — current state (snapshot table, fingerprint identifiers if populated, sub-variant note)
 - **Telemetry** — per-metric mini-charts in a grid; click a chart to expand
-- **Commands** — full audit list (paginated, filterable)
+- **Commands** — full audit list (cursor-paginated via `<LoadMoreButton>`, filterable)
 - **Profile** — read-only view of the active device profile (with hex addresses)
 
 **Acceptance:**
 - All four tabs render within 500 ms of nav.
-- Metric grid renders 30+ mini-charts without performance issues (Tremor handles it; if not, virtualise via `react-window`).
+- Metric grid renders 30+ mini-charts without performance issues — virtualised via `react-window`. **Commit upfront**, not "if Tremor falls over": 30+ live-updating Recharts instances on a Pi-class operator device (e.g., a low-end 2019 laptop on a tablet form-factor) blow CPU before they blow visual layout. The grid renders only the on-screen rows; off-screen rows mount lazily as the operator scrolls.
 
 ---
 
@@ -247,7 +247,23 @@ Implemented as a shared `AppShell` server component in `app/layout.tsx`. Per-pag
 
 **Auth:** required. Admin role.
 
-**Purpose:** profile detail. Renders the YAML in a read-only `<pre>` with syntax highlighting (using `react-syntax-highlighter` or similar). Hex addresses rendered as hex (not the integer JSONB representation — render-time conversion).
+**Purpose:** profile detail. Renders the YAML in a read-only `<pre>` with syntax highlighting (`react-syntax-highlighter`, lazy-loaded via `next/dynamic` so its ~150 kB gzipped bundle never lands in the dashboard route — verify with `next build` bundle analysis).
+
+**Hex render allowlist.** The profile JSON has integer values everywhere — addresses, lengths, cadences, offsets. Only specific *address fields* render as hex (`0x0600`); others render as decimal. The renderer maintains an explicit field allowlist:
+
+| Field | Render as |
+|-------|-----------|
+| `read_blocks[].address` | hex (`0x0600`) |
+| `metrics[].readback_register.address` | hex |
+| `control[].address` | hex |
+| `metrics[].address` (if present) | hex |
+| `read_blocks[].length` | decimal |
+| `read_blocks[].cadence_s` | decimal |
+| `metrics[].offset` | decimal |
+| `metrics[].length` | decimal |
+| (everything else integer) | decimal |
+
+A "render every integer as hex" shortcut would mangle every length, offset, and cadence value — don't take it.
 
 **Data dependencies:**
 - `GET /api/v1/device-profiles/{profile_slug}` — full profile JSON
@@ -286,6 +302,8 @@ Every page has an `error.tsx` rendering a friendly error card with:
 ### 12.3 Empty states
 
 `/admin/sites` with 0 sites, `/admin/users` with 1 user, `/sites/{slug}/commands` with 0 commands — each has a copy + illustration: "No commands issued yet. Use the Control panel to issue one."
+
+**Fresh-site, never-seen-telemetry.** A newly-bootstrapped site whose Pi has not yet published its first heartbeat or telemetry — `device_snapshot.metrics` is empty (`{}`), `last_seen_at` is null. Dashboard cards detect this via `snapshot.snapshot_time === null` (the snapshot row exists but no readings have arrived) OR by the absence of a snapshot row entirely. Renders a single full-width card: "Waiting for first telemetry from the edge agent. The Pi typically takes ~60 s after bootstrap to publish — check `<EdgeHealthCard>` for connection state." Replace with the live dashboard automatically as soon as the first WS `snapshot` message arrives.
 
 ### 12.4 Accessibility
 
