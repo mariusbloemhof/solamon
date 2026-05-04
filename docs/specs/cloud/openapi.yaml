@@ -285,8 +285,8 @@ components:
       type: object
       properties:
         status: { type: string, enum: [ok, degraded, fail] }
-        db: { type: string }
-        mqtt: { type: string }
+        db: { type: string, enum: [ok, degraded, fail] }
+        mqtt: { type: string, enum: [ok, degraded, fail] }
 
 # ─── Paths ─────────────────────────────────────────────────────────────────
 paths:

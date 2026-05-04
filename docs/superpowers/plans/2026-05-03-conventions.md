@@ -199,7 +199,91 @@ JWT validation reuses the same code path as Authorization-header bearer.
 
 ---
 
-## 7. Out of scope across all plans
+## 7. Implementation execution rules (lessons from SOL-20)
+
+These apply to **every plan execution**, not just the conventions a plan should be written to. Use the `superpowers:subagent-driven-development` skill against any plan in this directory; layer these rules on top.
+
+### 7.1 Pre-flight: lint the plan against committed artifacts
+
+**Before dispatching Task 1**, re-read every artifact the plan references (YAML schemas, JSON schemas, OpenAPI specs, migration SQL, etc.) and check for drift between what the plan assumes and what's currently committed. SOL-20 had three plan bugs caught only after Task 5 BLOCKED — they could have been caught here in a single pre-flight pass at zero cost.
+
+Concretely, for each plan, run through:
+
+- For every test fixture YAML/JSON inline in the plan: does it conform to the actual committed schema? (SOL-20 caught: empty `fingerprint.reads` lists violated `minItems: 1`.)
+- For every dataclass field declared in the plan: is it consistent with the actual committed YAML? (SOL-20 caught: `expected_range` typed as required but 5 catalog metrics legitimately lack it.)
+- For every cross-task dependency: does the order satisfy it? (SOL-20 caught: Task 5's integration test required Task 8's decoder.)
+- For every spec citation in the plan (file paths, line numbers, section refs): does it still resolve?
+
+This is one Read pass per artifact. It saves 1+ implementer cycles per bug.
+
+### 7.2 Plan bugs → fix the plan FIRST, then dispatch
+
+When the pre-flight in §7.1 (or a mid-execution discovery) finds a plan bug, **fix the plan in a `docs(plans)` commit BEFORE dispatching the corrected task**. Do NOT bundle the deviation into the implementation commit and chase the plan retroactively. Retroactive plan fixes clutter git history and obscure the "what shipped vs what was intended" trail.
+
+Pattern:
+
+```bash
+# Step 1: edit the plan to reflect the corrected approach
+git commit -m "docs(plans): retroactive Task N fix — <reason>"
+
+# Step 2: dispatch the implementer against the now-correct plan
+# (no deviation in the implementation commit needed)
+```
+
+### 7.3 Implementer prompt: "STOP on plan bugs"
+
+Every implementer subagent prompt MUST include this rule explicitly:
+
+> **If you encounter a bug in the plan, in upstream files, or in test infrastructure, STOP and report BLOCKED with the specific bug. Do NOT silently work around it by deviating from the plan.**
+
+SOL-20's Task 5 implementer silently fixed three plan bugs without flagging them. The fixes happened to be correct, but silent deviation breaks the "what shipped vs what was intended" trail. Surface bugs upward; the controller decides how to fix them.
+
+### 7.4 End-to-end smoke task at the END of every plan
+
+Task-level tests only verify what the test fixtures exercise. They cannot catch the gap between what committed YAML actually contains and what the runtime production path expects. SOL-20's `meter_clock` runtime crash was hidden by all 53 task-level tests because the conftest fixture stubbed the clock decoder.
+
+**Every plan adds a final task: "End-to-end smoke against committed artifacts"** — exercises the real production code path with no fixtures, no stubs, against the committed YAML / database / config. Discovers bugs the unit tests cannot reach.
+
+### 7.5 Reviewer dispatch: cost-tier the model
+
+- **Spec compliance reviewer** — haiku is sufficient. Just text-level diff against the plan.
+- **Code quality reviewer** — haiku for plan-verbatim code (most tasks); sonnet for tasks that introduced novel logic; **sonnet for the final whole-implementation review** (this is where architectural surprises surface).
+- The code-quality margin is low when the plan was prescribed verbatim and spec compliance ✓. Don't escalate model size to feel thorough.
+
+### 7.6 Reviewer prompt: spec full text vs diff only
+
+- **Spec compliance reviewer:** gets the FULL task text from the plan (so it can compare line-by-line).
+- **Code quality reviewer:** gets only the diff + the spec citation (file path + section). Saves ~30% reviewer tokens with no quality loss — code reviewers don't need to re-derive the spec; they evaluate the diff against it.
+
+### 7.7 Track deferred items explicitly
+
+If a finding is genuinely deferred (needs external input, hardware verification, future scope), note the SPECIFIC reason in the response doc. **"Deferred because lazy" is not acceptable.** A finding deferred without a real reason is a slop debt that compounds.
+
+Format:
+
+> **#13 — DoW cross-check.** DEFERRED. Needs hardware verification of weekday convention (ISO Mon=1 vs US Sun=1). Tracked as bench Day 1 verification with Johan.
+
+### 7.8 If a finding is rejected, document why
+
+If a reviewer raises a finding that's not actually a problem, REJECT it explicitly with the reason. Don't silently ignore. Future readers / re-reviews benefit from seeing the prior judgment.
+
+Format:
+
+> **#20 — `tuple[float, float]` annotation.** REJECTED. Reviewer's own framing: "fine in modern type-checkers". Python 3.12 + ruff handles correctly. Not a real finding.
+
+### 7.9 Token budget reality
+
+A 12-task plan executed via subagent-driven-development costs ~2M tokens (SOL-20 actual). Plan accordingly:
+
+- Tasks: ~80-150K tokens each (implementer + 2 reviews + verification)
+- Final whole-implementation review: ~100K tokens
+- Fix subagents (when needed): ~80-150K tokens each
+
+For SOL-8 (cloud, 18 tasks + integration tests via testcontainers), expect ~3-4M tokens. Pace accordingly across sessions.
+
+---
+
+## 8. Out of scope across all plans
 
 - Continuous-aggregate downsampling (Timescale)
 - Site-add API endpoint (post-MVP — bench bootstraps the single site directly)
