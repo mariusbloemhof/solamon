@@ -16,3 +16,4 @@ ignore = ["E501"]                 # line-length governed by ruff format
 [tool.pytest.ini_options]
 testpaths = ["packages"]
 asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
