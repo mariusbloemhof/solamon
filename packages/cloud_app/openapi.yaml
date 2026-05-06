@@ -1,0 +1,585 @@
+# Source of truth: docs/specs/cloud/openapi.yaml
+# This file is a verbatim copy bundled with the package for SDK generation
+# at build time. Spec changes happen in the doc copy first.
+#
+# Spec: docs/specs/cloud/api-surface.md
+# Linear: SOL-8
+#
+# This is the agreed handshake — every endpoint listed in api-surface.md
+# is declared here as a path stub. The implementation phase fills in the
+# request/response bodies; FastAPI auto-generates the authoritative spec
+# at /api/v1/openapi.json. The Next.js build pulls THAT spec to generate
+# its TypeScript SDK.
+#
+# Schemas below are minimal stubs — enough to wire up the page navigation
+# in the UI without committing to final field shapes.
+
+openapi: 3.1.0
+info:
+  title: Solamon Cloud API
+  version: 1.0.0
+  description: |
+    REST + WebSocket surface for the Solamon MVP.
+    Spec: docs/specs/cloud/api-surface.md.
+
+servers:
+  - url: https://cloud.solamon.example/api/v1
+    description: Production cloud (af-south-1)
+
+tags:
+  - name: auth
+  - name: sites
+  - name: devices
+  - name: telemetry
+  - name: control
+  - name: catalog
+  - name: edge
+  - name: health
+
+# ─── Security ──────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    edgeAuth:
+      type: http
+      scheme: bearer
+      description: Per-site MQTT password used as a one-shot bearer for /edge/config
+  schemas:
+
+    Problem:
+      type: object
+      description: RFC 7807 problem detail
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_in, user]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: bearer }
+        expires_in: { type: integer }
+        user: { $ref: "#/components/schemas/User" }
+
+    User:
+      type: object
+      required: [id, email, display_name, tier, role]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        tier: { type: string, enum: [operations, client] }
+        role: { type: string, enum: [admin, operator, viewer, billing] }
+
+    SiteSummary:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        timezone: { type: string }
+        last_seen_at: { type: string, format: date-time }
+        is_active: { type: boolean }
+
+    SiteDetail:
+      allOf:
+        - $ref: "#/components/schemas/SiteSummary"
+        - type: object
+          properties:
+            organisation: { type: object }
+            devices:
+              type: array
+              items: { $ref: "#/components/schemas/DeviceSummary" }
+            health: { $ref: "#/components/schemas/SiteHealth" }
+
+    DeviceSummary:
+      type: object
+      required: [id, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        manufacturer: { type: string }
+        model: { type: string }
+        sub_variant: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        unit_id: { type: integer }
+        status: { type: string, enum: [online, offline, unreachable, fault, unknown] }
+        last_seen_at: { type: string, format: date-time }
+
+    DeviceDetail:
+      allOf:
+        - $ref: "#/components/schemas/DeviceSummary"
+        - type: object
+          properties:
+            firmware_version: { type: string }
+            serial_number: { type: string }
+            commissioned_at: { type: string, format: date }
+            profile_slug: { type: string }
+            snapshot: { $ref: "#/components/schemas/DeviceSnapshot" }
+
+    DeviceSnapshot:
+      type: object
+      required: [snapshot_time, metrics]
+      properties:
+        snapshot_time: { type: string, format: date-time }
+        metrics:
+          type: object
+          additionalProperties: true
+          description: Map of logical_metric_key → value
+        operating_state: { type: string }
+        active_faults: { type: array, items: { type: string } }
+
+    ReadingPoint:
+      type: object
+      required: [time, value, quality]
+      properties:
+        time: { type: string, format: date-time }
+        value: { type: number, nullable: true }
+        quality: { type: string, enum: [good, uncertain, bad] }
+
+    ReadingSeries:
+      type: object
+      required: [metric, aggregate, points]
+      properties:
+        metric: { type: string }
+        aggregate: { type: string, enum: [raw, "1min", "15min", "1hour"] }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/ReadingPoint" }
+        next_cursor: { type: string }
+
+    CommandIssue:
+      type: object
+      required: [logical_metric, type, parameters]
+      properties:
+        logical_metric: { type: string }
+        type: { type: string, enum: [set_value] }
+        parameters:
+          type: object
+          additionalProperties: true
+
+    ControlCommand:
+      type: object
+      required: [id, device_id, logical_metric, status, issued_at]
+      properties:
+        id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        logical_metric: { type: string }
+        type: { type: string }
+        parameters: { type: object, additionalProperties: true }
+        status: { type: string, enum: [pending, sent, confirmed, failed, expired] }
+        issued_at: { type: string, format: date-time }
+        sent_at: { type: string, format: date-time }
+        acknowledged_at: { type: string, format: date-time }
+        confirmed_value: { type: object, additionalProperties: true }
+        error_message: { type: string, nullable: true }
+        last_publish_error: { type: string, nullable: true, description: "MQTT publish failure reason; populated when bounded retry exhausts; cleared on subsequent retry success" }
+        expires_at: { type: string, format: date-time }
+        issued_by:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            display_name: { type: string }
+
+    LogicalMetric:
+      type: object
+      required: [key, label, unit, data_type, category, is_cumulative]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        unit: { type: string }
+        data_type: { type: string }
+        category: { type: string }
+        is_cumulative: { type: boolean }
+        monotonic: { type: boolean }
+        direction_convention: { type: string }
+        expected_range:
+          type: array
+          items: { type: number }
+          minItems: 2
+          maxItems: 2
+        is_writable: { type: boolean }
+        allowed_values: { type: array, items: {} }
+
+    DeviceProfileSummary:
+      type: object
+      properties:
+        profile_slug: { type: string }
+        manufacturer: { type: string }
+        model: { type: string }
+        category: { type: string }
+
+    DeviceProfile:
+      allOf:
+        - $ref: "#/components/schemas/DeviceProfileSummary"
+        - type: object
+          properties:
+            profile_yaml: { type: object, description: "Full parsed profile YAML" }
+
+    EdgeConfig:
+      type: object
+      required: [site, device, profile, logical_metrics_catalog, mqtt]
+      properties:
+        site: { type: object }
+        device: { type: object }
+        profile: { type: object }
+        logical_metrics_catalog: { type: object }
+        mqtt:
+          type: object
+          properties:
+            broker_host: { type: string }
+            broker_port: { type: integer }
+            username: { type: string }
+            password:
+              type: string
+              format: password
+              description: "Sensitive — never log. Same value as the bootstrap bearer token."
+            client_id: { type: string }
+            topic_prefix: { type: string }
+
+    SiteHealth:
+      type: object
+      properties:
+        last_heartbeat_at: { type: string, format: date-time }
+        heartbeat_age_seconds: { type: integer }
+        last_reading_at: { type: string, format: date-time }
+        modbus_errors_per_minute: { type: number }
+        edge_buffer_depth_seconds: { type: integer }
+
+    # ─── WebSocket message envelopes (referenced from api-surface.md §5) ─────────
+    # OpenAPI 3.1 doesn't natively spec WebSocket; declaring shapes here so the
+    # web-ui SDK and ad-hoc clients have a contract to type against.
+    WSDeviceLiveMessage:
+      type: object
+      required: [type, data]
+      discriminator:
+        propertyName: type
+      properties:
+        type: { type: string, enum: [reading, snapshot, heartbeat] }
+        data: { type: object, additionalProperties: true }
+
+    WSCommandLiveMessage:
+      type: object
+      required: [type, data]
+      discriminator:
+        propertyName: type
+      properties:
+        type: { type: string, enum: [current, transition] }
+        data: { type: object, additionalProperties: true }
+
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded, fail] }
+        db: { type: string, enum: [ok, degraded, fail] }
+        mqtt: { type: string, enum: [ok, degraded, fail] }
+
+# ─── Paths ─────────────────────────────────────────────────────────────────
+paths:
+
+  # Auth
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email + password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout (no-op in MVP — no auth required)
+      security: []
+      responses:
+        "204": { description: No content }
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  # Sites & devices
+  /sites:
+    get:
+      operationId: listSites
+      tags: [sites]
+      summary: List sites visible to the current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SiteSummary" }
+
+  /sites/{slug}:
+    get:
+      operationId: getSite
+      tags: [sites]
+      summary: Site detail with devices and health
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteDetail" }
+
+  /sites/{slug}/devices:
+    get:
+      operationId: listDevices
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeviceSummary" }
+
+  /sites/{slug}/devices/{device_id}:
+    get:
+      operationId: getDevice
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: device_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceDetail" }
+
+  /sites/{slug}/devices/{device_id}/snapshot:
+    get:
+      operationId: getDeviceSnapshot
+      tags: [telemetry]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: device_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceSnapshot" }
+
+  /sites/{slug}/devices/{device_id}/readings:
+    get:
+      operationId: getDeviceReadings
+      tags: [telemetry]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: device_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: metric, in: query, required: true, schema: { type: string } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: aggregate, in: query, schema: { type: string, enum: [raw, "1min", "15min", "1hour"], default: raw } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadingSeries" }
+
+  # Control
+  /sites/{slug}/devices/{device_id}/commands:
+    get:
+      operationId: listCommands
+      tags: [control]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: device_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 500 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ControlCommand" }
+    post:
+      operationId: postCommand
+      tags: [control]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: device_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommandIssue" }
+      responses:
+        "202":
+          description: Accepted — command persisted; status reflects publish outcome
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ControlCommand" }
+        "422":
+          description: Validation failed
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: |
+            Broker unreachable beyond bounded retry budget. Command row exists at
+            status=pending; background worker continues retrying until expires_at.
+            Web UI surfaces this as a "broker unreachable" toast.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /commands/{id}:
+    get:
+      operationId: getCommand
+      tags: [control]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ControlCommand" }
+
+  # Catalog
+  /metrics-catalog:
+    get:
+      operationId: listMetricsCatalog
+      tags: [catalog]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LogicalMetric" }
+
+  /device-profiles:
+    get:
+      operationId: listDeviceProfiles
+      tags: [catalog]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeviceProfileSummary" }
+
+  /device-profiles/{profile_slug}:
+    get:
+      operationId: getDeviceProfile
+      tags: [catalog]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: profile_slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceProfile" }
+
+  # Edge bootstrap
+  /edge/config/{site_slug}:
+    get:
+      operationId: getEdgeConfig
+      tags: [edge]
+      security: [{ edgeAuth: [] }]
+      parameters:
+        - { name: site_slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EdgeConfig" }
+
+  # Health (note: paths are auto-prefixed with /api/v1 by the server URL above)
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness probe (unauthenticated; resolves to /api/v1/health)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /sites/{slug}/health:
+    get:
+      operationId: getSiteHealth
+      tags: [health]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteHealth" }
