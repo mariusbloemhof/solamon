@@ -56,7 +56,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-solamon-profile-loader = { path = "../profile_loader", editable = true }
+solamon-profile-loader = { workspace = true }
 ```
 
 For pip-only workflows (no uv): `pip install -e packages/profile_loader && pip install -e packages/edge_agent`. The Dockerfile does the same:

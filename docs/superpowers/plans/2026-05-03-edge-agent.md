@@ -154,7 +154,7 @@ solamon-edge-agent = "edge_agent.__main__:main"
 where = ["src"]
 
 [tool.uv.sources]
-solamon-profile-loader = { path = "../profile_loader", editable = true }
+solamon-profile-loader = { workspace = true }
 ```
 
 ```python
