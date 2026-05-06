@@ -271,7 +271,24 @@ Format:
 
 > **#20 — `tuple[float, float]` annotation.** REJECTED. Reviewer's own framing: "fine in modern type-checkers". Python 3.12 + ruff handles correctly. Not a real finding.
 
-### 7.9 Token budget reality
+### 7.9 Tests directories: NO `__init__.py`
+
+When using pytest's `--import-mode=importlib` (which we set workspace-wide for multi-package monorepo support), `tests/` and `tests/<subdir>/` MUST NOT contain `__init__.py` files. With `__init__.py` present, pytest treats them as regular packages and namespaces collide — both `packages/profile_loader/tests/conftest.py` and `packages/cloud_app/tests/conftest.py` get registered as `tests.conftest` and pytest crashes with `ValueError: Plugin already registered under a different name`.
+
+The correct pattern for monorepo test layouts:
+
+```
+packages/X/tests/
+├── conftest.py              # ✓ no __init__.py at sibling level
+├── unit/
+│   └── test_foo.py          # ✓ no __init__.py
+└── integration/
+    └── test_bar.py          # ✓ no __init__.py
+```
+
+Caught during cloud Task 3 — the cloud_app conftest.py collided with profile_loader's at `pytest packages/` time. Removing all 4 `__init__.py` files under `tests/` resolved it. Going forward, no plan should include `Create: packages/X/tests/__init__.py` steps.
+
+### 7.10 Token budget reality
 
 A 12-task plan executed via subagent-driven-development costs ~2M tokens (SOL-20 actual). Plan accordingly:
 

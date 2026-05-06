@@ -80,8 +80,7 @@ packages/edge_agent/
 - Create: `packages/edge_agent/pyproject.toml`
 - Create: `packages/edge_agent/src/edge_agent/__init__.py`
 - Create: `packages/edge_agent/src/edge_agent/now.py`
-- Create: `packages/edge_agent/tests/__init__.py`
-- Create: `packages/edge_agent/tests/unit/__init__.py`
+(No `__init__.py` files in `tests/` per [conventions §7.9](2026-05-03-conventions.md).)
 - Create: `packages/edge_agent/tests/unit/test_now_utc.py`
 
 - [ ] **Step 1: Failing test**
@@ -307,7 +306,6 @@ git commit -m "feat(edge-agent): bootstrap config loader (BootstrapConfig + load
 
 **Files:**
 - Create: `packages/edge_agent/src/edge_agent/config/site_config.py`
-- Create: `packages/edge_agent/tests/integration/__init__.py`
 - Create: `packages/edge_agent/tests/integration/test_site_config_fetch.py`
 
 - [ ] **Step 1: Failing test**
