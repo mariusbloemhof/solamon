@@ -14,7 +14,7 @@ The container images for the edge agent and (eventually) the cloud services live
 | `solamon-edge-agent` | The Pi-side Python edge agent | Every Pi at install time + on update |
 | `solamon-probe-cli` | Standalone CLI image (optional — could be inside `solamon-edge-agent` for MVP) | Same Pi, but only if probe is delivered as a separate container |
 | `solamon-cloud-app` | The single-process FastAPI + Next.js + ingestion + control-relay container | The cloud EC2 |
-| ~~`solamon-cloud-postgres`~~ | _(MVP: not used.)_ The bootstrap script uses upstream `timescale/timescaledb:2.14-pg16` directly. The custom-image slot is reserved for if/when we need a Timescale build with extra extensions or our own retention-policy bundles. | n/a |
+| ~~`solamon-cloud-postgres`~~ | _(MVP: not used.)_ The bootstrap script uses upstream `timescale/timescaledb:2.26.4-pg16` directly. The custom-image slot is reserved for if/when we need a Timescale build with extra extensions or our own retention-policy bundles. | n/a |
 
 For MVP, ship two repos: `solamon-edge-agent` and `solamon-cloud-app`. The probe-cli ships inside the edge-agent image (single binary `solamon-probe` on PATH inside the container). Postgres uses the upstream image — no customisation worth versioning.
 

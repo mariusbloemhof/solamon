@@ -86,7 +86,7 @@ The contract for `solamon-cloud-bootstrap.sh` — the script that takes a fresh 
 
 ### 3.5 Pull images (step 7)
 
-7. Pull `{ECR_URL}/solamon-cloud-app:{TAG}` and the upstream `timescale/timescaledb:2.14-pg16`, `eclipse-mosquitto:2`, `caddy:2`.
+7. Pull `{ECR_URL}/solamon-cloud-app:{TAG}` and the upstream `timescale/timescaledb:2.26.4-pg16`, `eclipse-mosquitto:2`, `caddy:2`.
 
 ### 3.6 Configuration (steps 8-12)
 

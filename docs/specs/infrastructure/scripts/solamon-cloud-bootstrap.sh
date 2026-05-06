@@ -160,7 +160,7 @@ ok "backup bucket reachable"
 # ───── 8: pull images ─────────────────────────────────────────────────────────
 log_step "Pulling images"
 docker pull "${ECR_REGISTRY}/solamon-cloud-app:${CLOUD_IMAGE_TAG}" || die "cloud-app image pull failed" 4
-docker pull timescale/timescaledb:2.14-pg16
+docker pull timescale/timescaledb:2.26.4-pg16
 docker pull eclipse-mosquitto:2
 docker pull caddy:2
 ok "images pulled"
@@ -289,7 +289,7 @@ log_step "Writing docker-compose.yml"
 cat > /opt/solamon/docker-compose.yml <<'EOF'
 services:
   postgres:
-    image: timescale/timescaledb:2.14-pg16
+    image: timescale/timescaledb:2.26.4-pg16
     container_name: solamon-postgres
     restart: unless-stopped
     environment:
