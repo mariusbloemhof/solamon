@@ -20,6 +20,7 @@ from cloud_app.app import create_app
 from cloud_app.auth.jwt import JwtPayload, issue_token
 from cloud_app.auth.passwords import hash_password
 from cloud_app.db.migrations import run_migrations
+from cloud_app.db.pool import create_pool
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -34,7 +35,7 @@ async def pg_container() -> AsyncIterator[PostgresContainer]:
 @pytest_asyncio.fixture
 async def pg_pool(pg_container) -> AsyncIterator[asyncpg.Pool]:
     url = pg_container.get_connection_url().replace("postgresql+psycopg2", "postgresql")
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
+    pool = await create_pool(url, min_size=1, max_size=5)
     yield pool
     await pool.close()
 

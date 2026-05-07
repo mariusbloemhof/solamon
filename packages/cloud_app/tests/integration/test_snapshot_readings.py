@@ -45,8 +45,8 @@ async def test_readings_range_returns_points_in_window(api_client, admin_token, 
     frm = (base + timedelta(minutes=5)).isoformat()
     to = (base + timedelta(minutes=35)).isoformat()
     res = await api_client.get(
-        f"/api/v1/sites/{seed_site.slug}/devices/{seed_device.id}/readings"
-        f"?metric=active_power_total&from={frm}&to={to}",
+        f"/api/v1/sites/{seed_site.slug}/devices/{seed_device.id}/readings",
+        params={"metric": "active_power_total", "from": frm, "to": to},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert res.status_code == 200
@@ -58,11 +58,13 @@ async def test_readings_range_returns_points_in_window(api_client, admin_token, 
 @pytest.mark.asyncio
 async def test_readings_rejects_window_over_30_days(api_client, admin_token,
                                                      seed_site, seed_device):
-    frm = "2026-01-01T00:00:00Z"
-    to = "2026-04-01T00:00:00Z"        # > 30 days
     res = await api_client.get(
-        f"/api/v1/sites/{seed_site.slug}/devices/{seed_device.id}/readings"
-        f"?metric=active_power_total&from={frm}&to={to}",
+        f"/api/v1/sites/{seed_site.slug}/devices/{seed_device.id}/readings",
+        params={
+            "metric": "active_power_total",
+            "from": "2026-01-01T00:00:00Z",
+            "to": "2026-04-01T00:00:00Z",   # > 30 days
+        },
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert res.status_code == 422
