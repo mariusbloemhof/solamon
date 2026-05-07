@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import asyncpg
 import httpx
@@ -113,3 +113,67 @@ async def admin_token(seed_admin):
         JwtPayload(sub=seed_admin.id, tier="operations", role="admin"),
         secret=JWT_SECRET, lifetime=timedelta(hours=1),
     )
+
+
+@dataclass(frozen=True)
+class SeededSite:
+    id: str
+    slug: str
+
+
+@dataclass(frozen=True)
+class SeededDevice:
+    id: str
+    name: str
+
+
+@pytest_asyncio.fixture
+async def seed_site(pg_pool, seed_admin):
+    site_id = uuid4()
+    async with pg_pool.acquire() as conn:
+        org_id = await conn.fetchval(
+            "SELECT id FROM app.organisation WHERE slug = 'test-org'"
+        )
+        await conn.execute(
+            """INSERT INTO app.site
+                 (id, organisation_id, name, slug, mqtt_username, mqtt_password)
+               VALUES ($1, $2, 'Bench', 'bench', 'solamon-bench', 'p')""",
+            site_id, org_id,
+        )
+        await conn.execute(
+            """INSERT INTO app.site_access (user_id, site_id, access_level)
+               VALUES ($1, $2, 'admin')""",
+            UUID(seed_admin.id), site_id,
+        )
+    return SeededSite(id=str(site_id), slug="bench")
+
+
+@pytest_asyncio.fixture
+async def seed_device_type(pg_pool):
+    type_id = uuid4()
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO app.device_type
+                 (id, manufacturer, model, category, profile_slug, profile_yaml)
+               VALUES ($1, 'AccuEnergy', 'Acuvim L', 'meter', 'acuvim_l', '{}'::jsonb)
+               ON CONFLICT (profile_slug) DO UPDATE SET id = EXCLUDED.id""",
+            type_id,
+        )
+        # Fetch the actual ID in case it was already present
+        actual_id = await conn.fetchval(
+            "SELECT id FROM app.device_type WHERE profile_slug = 'acuvim_l'"
+        )
+    return actual_id
+
+
+@pytest_asyncio.fixture
+async def seed_device(pg_pool, seed_site, seed_device_type):
+    device_id = uuid4()
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO app.device
+                 (id, site_id, device_type_id, name, host, port, unit_id)
+               VALUES ($1, $2, $3, 'M1', '192.168.1.254', 502, 1)""",
+            device_id, UUID(seed_site.id), seed_device_type,
+        )
+    return SeededDevice(id=str(device_id), name="M1")
