@@ -6,11 +6,19 @@ real instances via testcontainers and inject them. No mocks at this layer.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import timedelta
+from uuid import uuid4
 
 import asyncpg
+import httpx
 import pytest_asyncio
+from fastapi.testclient import TestClient
 from testcontainers.postgres import PostgresContainer
 
+from cloud_app.app import create_app
+from cloud_app.auth.jwt import JwtPayload, issue_token
+from cloud_app.auth.passwords import hash_password
 from cloud_app.db.migrations import run_migrations
 
 
