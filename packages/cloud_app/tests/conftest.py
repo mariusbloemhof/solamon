@@ -54,7 +54,7 @@ async def _migrate(pg_pool):
                 TRUNCATE
                     app.audit_entry, app.control_command, app.dead_letter,
                     app.device_snapshot, app.site_access, app.users,
-                    app.device, app.site, app.organisation,
+                    app.device, app.device_type, app.site, app.organisation,
                     timeseries.reading
                 RESTART IDENTITY CASCADE
             """)
@@ -155,15 +155,10 @@ async def seed_device_type(pg_pool):
         await conn.execute(
             """INSERT INTO app.device_type
                  (id, manufacturer, model, category, profile_slug, profile_yaml)
-               VALUES ($1, 'AccuEnergy', 'Acuvim L', 'meter', 'acuvim_l', '{}'::jsonb)
-               ON CONFLICT (profile_slug) DO UPDATE SET id = EXCLUDED.id""",
+               VALUES ($1, 'AccuEnergy', 'Acuvim L', 'meter', 'acuvim_l', '{}'::jsonb)""",
             type_id,
         )
-        # Fetch the actual ID in case it was already present
-        actual_id = await conn.fetchval(
-            "SELECT id FROM app.device_type WHERE profile_slug = 'acuvim_l'"
-        )
-    return actual_id
+    return type_id
 
 
 @pytest_asyncio.fixture
