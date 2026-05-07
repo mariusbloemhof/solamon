@@ -56,7 +56,7 @@ async def _migrate(pg_pool):
                     app.audit_entry, app.control_command, app.dead_letter,
                     app.device_snapshot, app.site_access, app.users,
                     app.device, app.device_type, app.site, app.organisation,
-                    timeseries.reading
+                    app.logical_metric, timeseries.reading
                 RESTART IDENTITY CASCADE
             """)
 
