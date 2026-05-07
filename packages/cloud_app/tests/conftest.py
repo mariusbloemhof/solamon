@@ -65,3 +65,51 @@ async def run_migrations_fn(pg_pool):
     async def _run():
         await run_migrations(pg_pool)
     return _run
+
+
+JWT_SECRET = "testsecret-32-chars-minimum-padding-pls"
+
+
+@pytest_asyncio.fixture
+async def app(pg_pool):
+    return create_app(pool=pg_pool, jwt_secret=JWT_SECRET)
+
+
+@pytest_asyncio.fixture
+async def api_client(app):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as client:
+        yield client
+
+
+@dataclass(frozen=True)
+class SeededAdmin:
+    id: str
+    email: str
+
+
+@pytest_asyncio.fixture
+async def seed_admin(pg_pool):
+    """Seed an organisation + admin user."""
+    org_id = uuid4()
+    user_id = uuid4()
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO app.organisation (id, name, slug) VALUES ($1, $2, $3)",
+            org_id, "Test Org", "test-org",
+        )
+        await conn.execute(
+            """INSERT INTO app.users
+                 (id, organisation_id, email, display_name, password_hash, tier, role)
+               VALUES ($1, $2, $3, 'Test Admin', $4, 'operations', 'admin')""",
+            user_id, org_id, "admin@test.example.com", hash_password("hunter2"),
+        )
+    return SeededAdmin(id=str(user_id), email="admin@test.example.com")
+
+
+@pytest_asyncio.fixture
+async def admin_token(seed_admin):
+    return issue_token(
+        JwtPayload(sub=seed_admin.id, tier="operations", role="admin"),
+        secret=JWT_SECRET, lifetime=timedelta(hours=1),
+    )
