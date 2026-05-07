@@ -7,13 +7,14 @@ The render pipeline: how data flows from the FastAPI server, into the page, and 
 
 ---
 
-## 1. Three sources of data
+## 1. Four sources of data
 
 | Source | Used for | Mechanism |
 |--------|----------|-----------|
 | **Server fetch in RSC** | Initial page render — page metadata, snapshot, command history | Direct `fetch()` from the page's server component, with the operator's session cookie forwarded |
 | **Client fetch via TanStack Query** | Interactive queries — chart data ranges, search filters, paginated lists | `useQuery({ queryKey, queryFn })`; staleTime tuned per query |
 | **WebSocket** | Live updates — every reading, snapshot, heartbeat, command transition | Native browser WebSocket; one connection per device-detail subscription, one per active command |
+| **Demo fixtures** | Local UI rehearsal when cloud or bench hardware is unavailable | Static JSON responses + replayed WS envelopes, enabled only by `NEXT_PUBLIC_DEMO_FIXTURES=true` |
 
 The flow:
 
@@ -326,11 +327,25 @@ For control commands, the UI shows the command at `status='pending'` immediately
 
 This avoids the "click-and-wait" pause that feels broken at 200-500 ms request latency.
 
-### 6.5 Loading skeletons
+### 6.5 Demo fixture adapter
+
+When `NEXT_PUBLIC_DEMO_FIXTURES=true`, `apiServer`, `useApiClient`, `useDeviceLiveStream`, and `useCommandLiveStream` route through a fixture adapter instead of the real network. The adapter lives under `packages/web_ui/lib/demo-fixtures.ts` and reads from `packages/web_ui/tests/fixtures/`.
+
+Rules:
+
+- Fixture payloads must satisfy the generated OpenAPI types and the WebSocket envelope types. If the schema changes, fixture tests fail.
+- The top bar renders `<DemoFixturesBadge>` for every fixture-backed page.
+- Dashboard replay cadence mirrors the real system: power every 10 s, demand every 30 s, energy/THD every 60 s, heartbeat every 60 s.
+- Fixture command submission never calls `POST /commands`; it returns a simulated `ControlCommand` and replays `sent → confirmed` over the command-live hook.
+- Production builds fail CI if `NEXT_PUBLIC_DEMO_FIXTURES=true` is present in the deployment environment template.
+
+The adapter is for rehearsals and deterministic UI tests. It must not mask real API errors when the flag is absent.
+
+### 6.6 Loading skeletons
 
 Every page has `loading.tsx` and every card has a built-in skeleton state (when `data === undefined`). Skeletons match the actual layout — same dimensions, same column structure — so the page doesn't shift on hydration.
 
-### 6.6 Error boundaries
+### 6.7 Error boundaries
 
 `error.tsx` at every route segment. Generic message + "Try again" button + a "Show details" disclosure that reveals the error message (helpful for development; non-disruptive in production where most users wouldn't click it).
 
@@ -368,6 +383,7 @@ Bundle measurements are first-load JS for `/sites/{slug}` (the heaviest route) o
 |---------|---------|---------|
 | `NEXT_PUBLIC_API_BASE` | All HTTP fetches (`apiServer`, `apiClient`, NextAuth Credentials provider) | `https://cloud.solamon.bloemhof.dev` |
 | `NEXT_PUBLIC_WS_BASE` | WebSocket connections | `wss://cloud.solamon.bloemhof.dev/api/v1/ws` |
+| `NEXT_PUBLIC_DEMO_FIXTURES` | Local fixture-backed demo/rehearsal mode; never enabled in production | `true` |
 | `NEXTAUTH_SECRET` | NextAuth cookie encryption key (server-only) | 32-byte random hex |
 | `NEXTAUTH_URL` | Public origin used by NextAuth callbacks | `https://cloud.solamon.bloemhof.dev` |
 
@@ -392,6 +408,7 @@ The SDK exposes named methods derived from each operation's `operationId` in `op
 - [`pages.md`](pages.md) — pages that consume these patterns
 - [`components.md`](components.md) — `<ConnectionPill>`, `<DataFreshness>`, `<RelativeTime>`
 - [`auth.md`](auth.md) — session token used in WS auth
+- [`demo-readiness.md`](demo-readiness.md) — fixture mode and rehearsal checklist
 - [`../cloud/api-surface.md`](../cloud/api-surface.md) §5 — WebSocket contract
 - [`../cloud/control-relay.md`](../cloud/control-relay.md) — the state machine the live-stream messages drive
 - [`../infrastructure/caddy-and-dns.md`](../infrastructure/caddy-and-dns.md) §3 — `Sec-WebSocket-Protocol` log redaction
