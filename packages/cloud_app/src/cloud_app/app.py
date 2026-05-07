@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from .api.auth import router as auth_router
 from .api.devices import router as devices_router
 from .api.sites import router as sites_router
+from .api.telemetry import router as telemetry_router
 
 
 def create_app(*, pool: asyncpg.Pool, jwt_secret: str) -> FastAPI:
@@ -22,5 +23,6 @@ def create_app(*, pool: asyncpg.Pool, jwt_secret: str) -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(sites_router, prefix="/api/v1")
     app.include_router(devices_router, prefix="/api/v1")
+    app.include_router(telemetry_router, prefix="/api/v1")
 
     return app
