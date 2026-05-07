@@ -9,6 +9,7 @@ async def test_login_returns_jwt_for_valid_credentials(api_client, seed_admin):
     body = res.json()
     assert body["token_type"] == "bearer"
     assert "access_token" in body
+    assert body["expires_in"] == 24 * 3600
     assert body["user"]["email"] == seed_admin.email
 
 
