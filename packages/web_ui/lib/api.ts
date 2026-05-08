@@ -67,7 +67,7 @@ export function apiBase(): string {
 
 export function setApiBase(value: string): void {
   const trimmed = value.trim().replace(/\/$/, "");
-  if (!trimmed || trimmed === "/api/v1") {
+  if (!trimmed || trimmed === "/api/v1" || trimmed === "https://cloud.amendi.dev/api/v1") {
     window.localStorage.removeItem(API_BASE_KEY);
     return;
   }

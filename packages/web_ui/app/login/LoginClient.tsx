@@ -52,6 +52,7 @@ export function LoginClient() {
         <label>
           <span className="subtext">Cloud API base</span>
           <input className="input" name="apiBase" defaultValue={apiBase()} placeholder="/api/v1" />
+          <span className="subtext">Default proxies to https://cloud.amendi.dev/api/v1 in local dev.</span>
         </label>
         {error ? <div className="pill warn">{error}</div> : null}
         <button className="button" disabled={busy} type="submit">
