@@ -108,6 +108,7 @@ async def handle_command(
     modbus: ModbusClient,
     command: CommandPayload,
     recent: TTLCache[str, dict[str, Any]],
+    device_fault: str | None = None,
 ) -> dict[str, Any]:
     if command.id in recent:
         ack = recent[command.id]
@@ -125,6 +126,11 @@ async def handle_command(
         return ack
     if _expired(command.expires_at):
         ack = _ack(command, site_config, "failed", error_message="received_after_expiry")
+        recent[command.id] = ack
+        await publish_ack(client, site_config, ack)
+        return ack
+    if device_fault:
+        ack = _ack(command, site_config, "failed", error_message=f"device_fault: {device_fault}")
         recent[command.id] = ack
         await publish_ack(client, site_config, ack)
         return ack

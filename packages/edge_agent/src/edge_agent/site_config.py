@@ -145,8 +145,8 @@ def load_cache(path: Path) -> SiteConfig:
 async def load_or_fetch_site_config(
     bootstrap: BootstrapConfig,
     *,
-    cache_path: Path = Path("/etc/solamon/site_config.yaml"),
-    allow_fallback: bool = True,
+    cache_path: Path = Path("/var/lib/solamon/site_config.yaml"),
+    allow_fallback: bool = False,
 ) -> SiteConfig:
     try:
         config = await fetch_site_config(bootstrap)

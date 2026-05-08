@@ -11,6 +11,7 @@ from pathlib import Path
 import structlog
 
 from profile_loader.catalog import Catalog
+from profile_loader.decoders import default_registry
 from profile_loader.loader import ProfileLoader
 from profile_loader.profile import Profile
 
@@ -55,16 +56,28 @@ async def _async_main() -> None:
         except NotImplementedError:
             pass
 
-    cache_path = Path(os.environ.get("SOLAMON_SITE_CONFIG", "/etc/solamon/site_config.yaml"))
+    cache_path = Path(os.environ.get("SOLAMON_SITE_CONFIG", "/var/lib/solamon/site_config.yaml"))
     buffer_path = Path(os.environ.get("SOLAMON_BUFFER", "/var/lib/solamon/readings.sqlite3"))
-    site_config = await load_or_fetch_site_config(bootstrap, cache_path=cache_path)
-    profile, catalog = _load_profile_and_catalog(site_config)
+    allow_fallback = os.environ.get("SOLAMON_ALLOW_BOOTSTRAP_FALLBACK") == "1"
+    site_config = await load_or_fetch_site_config(
+        bootstrap,
+        cache_path=cache_path,
+        allow_fallback=allow_fallback,
+    )
+    profile, catalog, decoders = _load_profile_and_catalog(site_config)
 
     buffer = Buffer(buffer_path)
     await buffer.init()
     metrics = EdgeMetrics()
     modbus = create_modbus_client(site_config.device.host, site_config.device.port)
-    await modbus.connect()
+    connected = await modbus.connect()
+    if connected:
+        fp = await profile.fingerprint_match(modbus, unit_id=site_config.device.unit_id)
+        if not fp.match:
+            for block in profile.read_blocks:
+                metrics.halt_block(block.name)
+            metrics.mark_device_fault("fingerprint_mismatch")
+            structlog.get_logger().error("modbus.fingerprint_mismatch", failures=fp.failures)
 
     tasks = [
         asyncio.create_task(
@@ -76,6 +89,8 @@ async def _async_main() -> None:
                 metrics=metrics,
                 site_config=site_config,
                 stop=stop,
+                catalog=catalog,
+                decoders=decoders,
             ),
             name=f"poll:{block.name}",
         )
@@ -109,11 +124,12 @@ async def _async_main() -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def _load_profile_and_catalog(site_config: SiteConfig) -> tuple[Profile, Catalog]:
+def _load_profile_and_catalog(site_config: SiteConfig) -> tuple[Profile, Catalog, dict]:
     if site_config.profile and site_config.logical_metrics_catalog:
         return (
             Profile.from_dict(site_config.profile),
             Catalog.from_dict(site_config.logical_metrics_catalog),
+            default_registry(),
         )
     root = Path(__file__).resolve()
     candidates = [
@@ -125,7 +141,7 @@ def _load_profile_and_catalog(site_config: SiteConfig) -> tuple[Profile, Catalog
     loader = ProfileLoader(schema_dir=architecture)
     catalog = loader.load_catalog(architecture / "logical_metrics.yaml")
     profile = loader.load_profile(architecture / "profiles" / "acuvim_l.yaml", catalog)
-    return profile, catalog
+    return profile, catalog, loader.decoders
 
 
 async def _rotation_loop(buffer: Buffer, stop: asyncio.Event) -> None:

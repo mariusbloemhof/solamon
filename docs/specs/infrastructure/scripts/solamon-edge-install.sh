@@ -275,6 +275,8 @@ services:
       - /var/lib/solamon:/var/lib/solamon
     environment:
       - SOLAMON_CONFIG=/etc/solamon/bootstrap.yaml
+      - SOLAMON_SITE_CONFIG=/var/lib/solamon/site_config.yaml
+      - SOLAMON_BUFFER=/var/lib/solamon/readings.sqlite3
     logging:
       driver: json-file
       options:

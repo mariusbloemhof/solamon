@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
+from datetime import UTC, datetime, timedelta
 from itertools import groupby
 from typing import Any
 
@@ -27,16 +28,23 @@ from .site_config import SiteConfig
 log = structlog.get_logger()
 
 
-def build_telemetry_payload(site_config: SiteConfig, block_name: str, timestamp: str, rows: list[BufferRow]) -> dict[str, Any]:
+def build_telemetry_payload(
+    site_config: SiteConfig,
+    block_name: str,
+    timestamp: str,
+    rows: list[BufferRow],
+) -> dict[str, Any]:
     quality_rank = {"good": 0, "uncertain": 1, "bad": 2}
     worst = max((row.quality for row in rows), key=lambda q: quality_rank.get(q, 0))
+    row_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    source = "replay_buffer" if datetime.now(UTC) - row_time > timedelta(minutes=2) else "modbus_poll"
     return {
         "version": "1.0",
         "site_slug": site_config.site.slug,
         "device_id": site_config.device.id,
         "timestamp": timestamp,
         "block": block_name,
-        "source": "modbus_poll",
+        "source": source,
         "quality": worst,
         "readings": {row.logical_metric_key: row.value for row in rows},
     }
@@ -110,8 +118,9 @@ async def command_loop(
     profile: Profile,
     catalog: Catalog,
     modbus: ModbusClient,
+    metrics: EdgeMetrics,
+    recent: TTLCache[str, dict[str, Any]],
 ) -> None:
-    recent: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=1000, ttl=300)
     async for message in messages:
         try:
             cmd = CommandPayload.from_json(message.payload)
@@ -126,6 +135,7 @@ async def command_loop(
             modbus=modbus,
             command=cmd,
             recent=recent,
+            device_fault=metrics.device_fault,
         )
 
 
@@ -140,14 +150,15 @@ async def mqtt_loop(
     stop: asyncio.Event,
 ) -> None:
     backoff = 1.0
-    will = mqtt.Will(
-        topic=f"{site_config.mqtt.topic_prefix}/heartbeat",
-        payload=json.dumps(build_lwt_for_site(site_config)),
-        qos=1,
-        retain=True,
-    )
+    recent: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=1000, ttl=300)
     while not stop.is_set():
         try:
+            will = mqtt.Will(
+                topic=f"{site_config.mqtt.topic_prefix}/heartbeat",
+                payload=json.dumps(build_lwt_for_site(site_config)),
+                qos=1,
+                retain=True,
+            )
             async with mqtt.Client(
                 hostname=site_config.mqtt.broker_host,
                 port=site_config.mqtt.broker_port,
@@ -161,12 +172,21 @@ async def mqtt_loop(
             ) as client:
                 backoff = 1.0
                 command_topic = f"{site_config.mqtt.topic_prefix}/commands/{site_config.device.id}"
-                async with client.messages_for_topic(command_topic) as messages:
+                async with client.filtered_messages(command_topic) as messages:
                     await client.subscribe(command_topic, qos=1)
                     await asyncio.gather(
                         publish_loop(client, site_config, buffer, stop),
                         heartbeat_loop(client, site_config, buffer, metrics, stop),
-                        command_loop(client, messages, site_config, profile, catalog, modbus),
+                        command_loop(
+                            client,
+                            messages,
+                            site_config,
+                            profile,
+                            catalog,
+                            modbus,
+                            metrics,
+                            recent,
+                        ),
                     )
         except mqtt.MqttError as exc:
             log.warning("mqtt.disconnected", error=str(exc), backoff=backoff)

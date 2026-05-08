@@ -111,3 +111,23 @@ async def test_command_rejects_disallowed_value():
 
     assert ack["status"] == "failed"
     assert "allowed" in ack["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_command_rejects_device_fault_before_modbus_write():
+    profile, catalog, config = _setup()
+    modbus = FakeModbus()
+    ack = await handle_command(
+        client=FakeMqtt(),
+        site_config=config,
+        profile=profile,
+        catalog=catalog,
+        modbus=modbus,
+        command=_command(),
+        recent=TTLCache(maxsize=1000, ttl=300),
+        device_fault="fingerprint_mismatch",
+    )
+
+    assert ack["status"] == "failed"
+    assert ack["error_message"] == "device_fault: fingerprint_mismatch"
+    assert modbus.writes == 0

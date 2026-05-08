@@ -11,6 +11,7 @@ class EdgeMetrics:
         self._modbus_errors: deque[datetime] = deque()
         self._last_modbus_success: datetime | None = None
         self.halted_blocks: set[str] = set()
+        self.device_fault: str | None = None
 
     def record_modbus_error(self, block_name: str | None = None) -> None:
         self._modbus_errors.append(datetime.now(UTC))
@@ -23,6 +24,9 @@ class EdgeMetrics:
 
     def halt_block(self, block_name: str) -> None:
         self.halted_blocks.add(block_name)
+
+    def mark_device_fault(self, reason: str) -> None:
+        self.device_fault = reason
 
     def modbus_errors_per_minute_total(self) -> float:
         self._evict_old_errors()

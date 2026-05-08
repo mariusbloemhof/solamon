@@ -13,6 +13,8 @@ from edge_agent.modbus.client import ModbusClient
 from edge_agent.modbus.codec import registers_to_bytes
 from edge_agent.now import now_utc
 from edge_agent.site_config import SiteConfig
+from profile_loader.catalog import Catalog
+from profile_loader.decoders import CustomDecoder
 from profile_loader.profile import Profile, ReadBlock
 
 log = structlog.get_logger()
@@ -26,7 +28,9 @@ async def poll_one_cycle(
     buffer: Buffer,
     metrics: EdgeMetrics,
     site_config: SiteConfig,
-) -> None:
+    catalog: Catalog | None = None,
+    decoders: dict[str, CustomDecoder] | None = None,
+) -> bool:
     started = time.monotonic()
     if block.fc == 3:
         result = await client.read_holding_registers(
@@ -50,10 +54,15 @@ async def poll_one_cycle(
             block=block.name,
             exception_code=getattr(result, "exception_code", None),
         )
-        return
+        return False
 
     timestamp = now_utc()
-    decoded = profile.decode(block.name, registers_to_bytes(result.registers))
+    decoded = profile.decode(
+        block.name,
+        registers_to_bytes(result.registers),
+        catalog=catalog,
+        decoders=decoders,
+    )
     await buffer.write_batch(
         [
             ReadingRow(
@@ -75,6 +84,7 @@ async def poll_one_cycle(
         metric_count=len(decoded),
         elapsed_ms=int((time.monotonic() - started) * 1000),
     )
+    return True
 
 
 async def poll_block(
@@ -86,6 +96,8 @@ async def poll_block(
     metrics: EdgeMetrics,
     site_config: SiteConfig,
     stop: asyncio.Event,
+    catalog: Catalog | None = None,
+    decoders: dict[str, CustomDecoder] | None = None,
 ) -> None:
     consecutive_failures = 0
     while not stop.is_set():
@@ -94,15 +106,17 @@ async def poll_block(
             await asyncio.wait_for(stop.wait(), timeout=block.cadence_s)
             continue
         try:
-            await poll_one_cycle(
+            ok = await poll_one_cycle(
                 profile=profile,
                 block=block,
                 client=client,
                 buffer=buffer,
                 metrics=metrics,
                 site_config=site_config,
+                catalog=catalog,
+                decoders=decoders,
             )
-            consecutive_failures = 0
+            consecutive_failures = 0 if ok else consecutive_failures + 1
         except asyncio.CancelledError:
             raise
         except TimeoutError as exc:
