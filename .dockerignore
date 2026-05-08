@@ -25,13 +25,16 @@ evaluations/
 requirements/
 .serena/
 node_modules/
+**/node_modules/
 .next/
+**/.next/
 dist/
 *.md
 !packages/cloud_app/README.md
 
 # Local docker compose / bench artifacts.
 bench/
+.web-ui-logs/
 .dockerignore
 Dockerfile
 

@@ -4,6 +4,7 @@ const cloudApiOrigin = process.env.SOLAMON_CLOUD_ORIGIN ?? "https://cloud.amendi
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   async rewrites() {
     return [
       {

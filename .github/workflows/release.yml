@@ -1,0 +1,68 @@
+name: Release containers
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: af-south-1
+  AWS_ACCOUNT_ID: "556671502751"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::556671502751:role/GitHubActionsECRPushRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME}"
+          short_sha="${GITHUB_SHA::7}"
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          build_image() {
+            local repo="$1"
+            local dockerfile="$2"
+            docker buildx build \
+              --platform linux/arm64 \
+              --file "${dockerfile}" \
+              --tag "${registry}/${repo}:${version}" \
+              --tag "${registry}/${repo}:latest" \
+              --tag "${registry}/${repo}:sha-${short_sha}" \
+              --cache-from "type=gha,scope=${repo}" \
+              --cache-to "type=gha,mode=max,scope=${repo}" \
+              --push \
+              .
+          }
+
+          build_image solamon-cloud-app packages/cloud_app/Dockerfile
+          build_image solamon-edge-agent packages/edge_agent/Dockerfile
+          build_image solamon-web-ui packages/web_ui/Dockerfile
+
+      - name: Verify pushed tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repo in solamon-cloud-app solamon-edge-agent solamon-web-ui; do
+            aws ecr describe-images \
+              --repository-name "${repo}" \
+              --image-ids imageTag="${GITHUB_REF_NAME}" \
+              --region "${AWS_REGION}" >/dev/null
+          done

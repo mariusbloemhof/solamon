@@ -13,7 +13,8 @@ The container images for the edge agent and (eventually) the cloud services live
 |----------------|--------------|-----------|
 | `solamon-edge-agent` | The Pi-side Python edge agent | Every Pi at install time + on update |
 | `solamon-probe-cli` | Standalone CLI image (optional — could be inside `solamon-edge-agent` for MVP) | Same Pi, but only if probe is delivered as a separate container |
-| `solamon-cloud-app` | The single-process FastAPI + Next.js + ingestion + control-relay container | The cloud EC2 |
+| `solamon-cloud-app` | FastAPI API + ingestion + control-relay container | The cloud EC2 |
+| `solamon-web-ui` | Next.js operator dashboard | The cloud EC2 behind Caddy |
 | ~~`solamon-cloud-postgres`~~ | _(MVP: not used.)_ The bootstrap script uses upstream `timescale/timescaledb:2.26.4-pg16` directly. The custom-image slot is reserved for if/when we need a Timescale build with extra extensions or our own retention-policy bundles. | n/a |
 
 For MVP, ship two repos: `solamon-edge-agent` and `solamon-cloud-app`. The probe-cli ships inside the edge-agent image (single binary `solamon-probe` on PATH inside the container). Postgres uses the upstream image — no customisation worth versioning.
@@ -53,7 +54,7 @@ Steps:
        --tag {ECR_URL}/solamon-edge-agent:sha-{shortSHA} \
        --push \
        services/edge-agent/
-  5. Same for solamon-cloud-app
+  5. Same for `solamon-cloud-app` and `solamon-web-ui`
   6. Run `aws ecr describe-images` to verify the tags landed
   7. Post a Slack/Discord notification (optional)
 ```
@@ -120,7 +121,8 @@ Scoped to ECR push on the two repos:
       ],
       "Resource": [
         "arn:aws:ecr:af-south-1:{ACCOUNT-ID}:repository/solamon-edge-agent",
-        "arn:aws:ecr:af-south-1:{ACCOUNT-ID}:repository/solamon-cloud-app"
+        "arn:aws:ecr:af-south-1:{ACCOUNT-ID}:repository/solamon-cloud-app",
+        "arn:aws:ecr:af-south-1:{ACCOUNT-ID}:repository/solamon-web-ui"
       ]
     }
   ]
@@ -161,7 +163,7 @@ This eliminates the long-lived credentials but adds the SSM agent + activation f
 
 The EC2 has an **IAM instance profile** with `EC2InstanceRole` attached (from [`aws-account.md`](aws-account.md) §4.2). Permissions:
 
-- ECR pull on `solamon-cloud-app`
+- ECR pull on `solamon-cloud-app` and `solamon-web-ui`
 - S3 read/write on `solamon-backup-prod`
 - CloudWatch metrics + logs
 

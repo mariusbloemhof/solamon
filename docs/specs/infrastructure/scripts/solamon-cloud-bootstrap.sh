@@ -13,6 +13,7 @@
 #         --domain "cloud.solamon.bloemhof.dev" \
 #         --tailscale-auth-key "tskey-auth-..." \
 #         --cloud-image-tag "v0.1.0" \
+#         --web-image-tag "v0.1.0" \
 #         --letsencrypt-email "admin@bloemhof.dev"
 #
 # Idempotent — re-running on a partially-bootstrapped EC2 continues from where
@@ -25,6 +26,7 @@ set -euo pipefail
 DOMAIN=""
 TAILSCALE_AUTH_KEY=""
 CLOUD_IMAGE_TAG=""
+WEB_IMAGE_TAG=""
 LETSENCRYPT_EMAIL=""
 ADMIN_EMAIL=""
 DB_PASSWORD=""
@@ -64,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --domain)             DOMAIN="$2"; shift 2 ;;
         --tailscale-auth-key) TAILSCALE_AUTH_KEY="$2"; shift 2 ;;
         --cloud-image-tag)    CLOUD_IMAGE_TAG="$2"; shift 2 ;;
+        --web-image-tag)      WEB_IMAGE_TAG="$2"; shift 2 ;;
         --letsencrypt-email)  LETSENCRYPT_EMAIL="$2"; shift 2 ;;
         --admin-email)        ADMIN_EMAIL="$2"; shift 2 ;;
         --db-password)        DB_PASSWORD="$2"; shift 2 ;;
@@ -77,6 +80,7 @@ require_arg DOMAIN
 require_arg TAILSCALE_AUTH_KEY
 require_arg CLOUD_IMAGE_TAG
 require_arg LETSENCRYPT_EMAIL
+[[ -z "$WEB_IMAGE_TAG" ]] && WEB_IMAGE_TAG="$CLOUD_IMAGE_TAG"
 
 # Default admin email to admin@${DOMAIN} so it has a real TLD (NextAuth's
 # email validator rejects bare "admin@solamon"). Can still be overridden
@@ -171,6 +175,7 @@ ok "backup bucket reachable"
 # ───── 8: pull images ─────────────────────────────────────────────────────────
 log_step "Pulling images"
 docker pull "${ECR_REGISTRY}/solamon-cloud-app:${CLOUD_IMAGE_TAG}" || die "cloud-app image pull failed" 4
+docker pull "${ECR_REGISTRY}/solamon-web-ui:${WEB_IMAGE_TAG}" || die "web-ui image pull failed" 4
 docker pull timescale/timescaledb:2.26.4-pg16
 docker pull eclipse-mosquitto:2
 docker pull caddy:2
@@ -206,6 +211,7 @@ DOMAIN=${DOMAIN}
 LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
 ECR_REGISTRY=${ECR_REGISTRY}
 CLOUD_IMAGE_TAG=${CLOUD_IMAGE_TAG}
+WEB_IMAGE_TAG=${WEB_IMAGE_TAG}
 EOF
     chmod 600 "$ENV_FILE"
     ok "secrets generated and stored in .env (mode 600)"
@@ -225,14 +231,8 @@ cat > /opt/solamon/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     encode zstd gzip
 
-    # MVP-only: the web UI image is not built yet (SOL-9). Caddy proxies
-    # /api/* to the FastAPI app; everything else gets a placeholder. Re-add
-    # a reverse_proxy block to web:3000 once that image ships.
     reverse_proxy /api/* app:8000
-
-    handle / {
-        respond "Solamon cloud - API at /api/v1, web UI not yet deployed" 200
-    }
+    reverse_proxy web:3000
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -402,7 +402,18 @@ services:
       postgres:
         condition: service_healthy
 
-  # web service intentionally omitted for MVP — see Caddyfile note above.
+  web:
+    image: ${ECR_REGISTRY}/solamon-web-ui:${WEB_IMAGE_TAG}
+    container_name: solamon-web-ui
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_SOLAMON_API_BASE=/api/v1
+    depends_on:
+      app:
+        condition: service_started
 
 volumes:
   caddy-data:
