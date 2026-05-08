@@ -40,7 +40,7 @@ async def _run_http(app, settings: Settings) -> None:
     await uvicorn.Server(config).serve()
 
 
-async def _run_mqtt(pool, settings: Settings) -> None:
+async def _run_mqtt(app, pool, settings: Settings) -> None:
     if not settings.bench_site_slug or not settings.bench_device_id:
         log.warning(
             "mqtt.disabled",
@@ -63,6 +63,7 @@ async def _run_mqtt(pool, settings: Settings) -> None:
             ) as client:
                 async with client.messages() as messages:
                     await client.subscribe(settings.acuvim_topic)
+                    app.state.mqtt_connected = True
                     log.info(
                         "mqtt.subscribed",
                         host=settings.mqtt_host,
@@ -93,6 +94,7 @@ async def _run_mqtt(pool, settings: Settings) -> None:
                             log.error("mqtt.ingest.fail",
                                       topic=str(message.topic), error=str(exc))
         except mqtt.MqttError as exc:
+            app.state.mqtt_connected = False
             log.warning("mqtt.disconnected", error=str(exc), retry_in_seconds=5)
             await asyncio.sleep(5)
 
@@ -110,7 +112,7 @@ async def _async_main() -> None:
         app = create_app(pool=pool, jwt_secret=settings.jwt_secret)
         await asyncio.gather(
             _run_http(app, settings),
-            _run_mqtt(pool, settings),
+            _run_mqtt(app, pool, settings),
         )
     finally:
         await pool.close()

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from .api.auth import router as auth_router
 from .api.devices import router as devices_router
+from .api.health import router as health_router
 from .api.sites import router as sites_router
 from .api.telemetry import router as telemetry_router
 
@@ -19,10 +20,12 @@ def create_app(*, pool: asyncpg.Pool, jwt_secret: str) -> FastAPI:
     app = FastAPI(title="Solamon Cloud API", version="0.1.0", root_path="")
     app.state.pool = pool
     app.state.jwt_secret = jwt_secret
+    app.state.mqtt_connected = False
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(sites_router, prefix="/api/v1")
     app.include_router(devices_router, prefix="/api/v1")
     app.include_router(telemetry_router, prefix="/api/v1")
+    app.include_router(health_router, prefix="/api/v1")
 
     return app
