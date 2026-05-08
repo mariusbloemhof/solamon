@@ -1,4 +1,4 @@
-import type { DashboardSnapshot, ReadingPoint } from "@/lib/fixtures";
+import type { DashboardSnapshot, DeviceOption, ReadingPoint } from "@/lib/fixtures";
 import { fixture } from "@/lib/fixtures";
 
 const API_BASE_KEY = "solamon-api-base";
@@ -112,13 +112,13 @@ export function useDemoAuth(email: string): void {
   window.localStorage.setItem(USER_KEY, JSON.stringify({ email, display_name: email, role: "demo", tier: "operations" }));
 }
 
-export async function loadDashboardSnapshot(slug: string): Promise<DashboardSnapshot> {
+export async function loadDashboardSnapshot(slug: string, preferredDeviceId?: string): Promise<DashboardSnapshot> {
   const token = authToken();
   if (!token) {
     throw new Error("No cloud token yet");
   }
   const site = await apiFetch<SiteDetail>(`/sites/${slug}`, token);
-  const device = site.devices[0];
+  const device = chooseDevice(site.devices, preferredDeviceId);
   if (!device) {
     throw new Error(`Site ${slug} has no devices`);
   }
@@ -129,6 +129,20 @@ export async function loadDashboardSnapshot(slug: string): Promise<DashboardSnap
   ]);
 
   return mapCloudSnapshot(site, device, snapshot, series);
+}
+
+function chooseDevice(devices: DeviceSummary[], preferredDeviceId?: string): DeviceSummary | undefined {
+  if (preferredDeviceId) {
+    const preferred = devices.find((device) => device.id === preferredDeviceId);
+    if (preferred) return preferred;
+  }
+
+  const online = devices
+    .filter((device) => device.status === "online")
+    .sort((a, b) => timestamp(b.last_seen_at) - timestamp(a.last_seen_at))[0];
+  if (online) return online;
+
+  return [...devices].sort((a, b) => timestamp(b.last_seen_at) - timestamp(a.last_seen_at))[0];
 }
 
 async function loadPowerSeries(slug: string, deviceId: string, token: string): Promise<ReadingPoint[]> {
@@ -173,7 +187,8 @@ function mapCloudSnapshot(
       slug: site.slug,
       deviceName: [device.manufacturer, device.model].filter(Boolean).join(" ") || device.name,
       deviceId: device.id,
-      location: `${device.host}:${device.port} unit ${device.unit_id}`
+      location: `${device.host}:${device.port} unit ${device.unit_id}`,
+      devices: site.devices.map(deviceOption)
     },
     metrics: {
       activePowerKw: num(m.active_power_total, 0),
@@ -206,6 +221,18 @@ function mapCloudSnapshot(
   };
 }
 
+function deviceOption(device: DeviceSummary): DeviceOption {
+  const makeModel = [device.manufacturer, device.model].filter(Boolean).join(" ");
+  const label = makeModel ? `${device.name} (${makeModel})` : device.name;
+  return {
+    id: device.id,
+    name: device.name,
+    label,
+    status: device.status,
+    lastSeenAt: device.last_seen_at ?? null
+  };
+}
+
 function pointFromSnapshot(metrics: Record<string, unknown>): ReadingPoint[] {
   const value = num(metrics.active_power_total, 0);
   return [{ t: "now", kw: value }];
@@ -225,7 +252,12 @@ function timeLabel(value: unknown): string {
 
 function ageSeconds(value?: string | null): number {
   if (!value) return 0;
+  const time = timestamp(value);
+  return time ? Math.max(0, Math.round((Date.now() - time) / 1000)) : 0;
+}
+
+function timestamp(value?: string | null): number {
+  if (!value) return 0;
   const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return 0;
-  return Math.max(0, Math.round((Date.now() - time) / 1000));
+  return Number.isNaN(time) ? 0 : time;
 }

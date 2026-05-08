@@ -3,6 +3,14 @@ export type ReadingPoint = {
   kw: number;
 };
 
+export type DeviceOption = {
+  id: string;
+  name: string;
+  label: string;
+  status: "online" | "offline" | "unreachable" | "fault" | "unknown";
+  lastSeenAt: string | null;
+};
+
 export type DashboardSnapshot = {
   site: {
     name: string;
@@ -10,6 +18,7 @@ export type DashboardSnapshot = {
     deviceName: string;
     deviceId: string;
     location: string;
+    devices: DeviceOption[];
   };
   metrics: {
     activePowerKw: number;
@@ -42,7 +51,16 @@ export const fixture: DashboardSnapshot = {
     slug: "bench",
     deviceName: "Acuvim L revenue meter",
     deviceId: "bench-acuvim-l-01",
-    location: "Johan workbench"
+    location: "Johan workbench",
+    devices: [
+      {
+        id: "bench-acuvim-l-01",
+        name: "Acuvim L revenue meter",
+        label: "Acuvim L revenue meter",
+        status: "online",
+        lastSeenAt: null
+      }
+    ]
   },
   metrics: {
     activePowerKw: 286.4,

@@ -9,16 +9,20 @@ import { currentUserLabel, loadDashboardSnapshot } from "@/lib/api";
 import { fixture, jitterSnapshot, type DashboardSnapshot } from "@/lib/fixtures";
 import { fmt, nowTime } from "@/lib/format";
 
+const deviceSelectionKey = (slug: string) => `solamon-selected-device:${slug}`;
+
 export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
   const [tick, setTick] = useState(0);
   const [cloudData, setCloudData] = useState<DashboardSnapshot | null>(null);
   const [cloudError, setCloudError] = useState("");
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [userLabel, setUserLabel] = useState("operator");
   const data = useMemo(
     () => (cloudData ? cloudData : jitterSnapshot(fixture, tick)),
     [cloudData, tick]
   );
   const dataMode = cloudData ? "cloud" : "fixtures";
+  const deviceOptions = data.site.devices;
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 2000);
@@ -26,15 +30,23 @@ export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
   }, []);
 
   useEffect(() => {
+    setSelectedDeviceId(window.localStorage.getItem(deviceSelectionKey(slug)) ?? "");
+  }, [slug]);
+
+  useEffect(() => {
     let cancelled = false;
     setUserLabel(currentUserLabel());
 
     async function refresh() {
       try {
-        const snapshot = await loadDashboardSnapshot(slug);
+        const snapshot = await loadDashboardSnapshot(slug, selectedDeviceId || undefined);
         if (!cancelled) {
           setCloudData(snapshot);
           setCloudError("");
+          if (!selectedDeviceId) {
+            window.localStorage.setItem(deviceSelectionKey(slug), snapshot.site.deviceId);
+            setSelectedDeviceId(snapshot.site.deviceId);
+          }
         }
       } catch (exc) {
         if (!cancelled) {
@@ -49,7 +61,12 @@ export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [slug]);
+  }, [slug, selectedDeviceId]);
+
+  function onDeviceChange(deviceId: string) {
+    window.localStorage.setItem(deviceSelectionKey(slug), deviceId);
+    setSelectedDeviceId(deviceId);
+  }
 
   return (
     <AppShell active="dashboard" dataMode={dataMode} userLabel={userLabel}>
@@ -62,7 +79,22 @@ export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
           </p>
         </div>
         <div className="inline-row">
+          <select
+            aria-label="Select device"
+            className="select compact-select"
+            value={selectedDeviceId || data.site.deviceId}
+            onChange={(event) => onDeviceChange(event.target.value)}
+          >
+            {deviceOptions.map((device) => (
+              <option key={device.id} value={device.id}>
+                {device.label}
+              </option>
+            ))}
+          </select>
           <span className="pill ok"><RadioTower size={14} /> Last update {nowTime()}</span>
+          <span className={`pill ${deviceStatusClass(deviceOptions.find((device) => device.id === data.site.deviceId)?.status)}`}>
+            {deviceOptions.find((device) => device.id === data.site.deviceId)?.status ?? "unknown"}
+          </span>
           <span className="pill muted">{data.site.deviceId}</span>
         </div>
       </div>
@@ -138,6 +170,12 @@ export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
       </div>
     </AppShell>
   );
+}
+
+function deviceStatusClass(status?: string): string {
+  if (status === "online") return "ok";
+  if (status === "offline" || status === "unknown") return "muted";
+  return "warn";
 }
 
 function MetricCard({

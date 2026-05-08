@@ -209,6 +209,7 @@ th {
 .inline-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -532,6 +533,14 @@ p.subtext {
   color: var(--fg);
 }
 
+.compact-select {
+  min-height: 30px;
+  width: min(300px, 36vw);
+  max-width: 100%;
+  background: var(--bg);
+  font-size: 12px;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -609,8 +618,13 @@ p.subtext {
   }
 
   .topbar-left,
-  .topbar-right {
+  .topbar-right,
+  .inline-row {
     flex-wrap: wrap;
+  }
+
+  .compact-select {
+    width: 100%;
   }
 
   .dashboard-grid {
