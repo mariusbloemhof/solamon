@@ -103,7 +103,7 @@ ok "Ubuntu 24.04 ARM64; AWS account ${AWS_ACCOUNT_ID}"
 log_step "Installing system packages + AWS CLI v2"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    docker.io docker-compose-plugin ca-certificates curl jq ufw cron unzip dnsutils
+    docker.io docker-compose-v2 ca-certificates curl jq ufw cron unzip dnsutils
 # AWS CLI v2 (the apt awscli package is v1, EOL'd for new deployments).
 if ! command -v aws >/dev/null 2>&1 || ! aws --version 2>&1 | grep -q "aws-cli/2"; then
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
@@ -119,11 +119,22 @@ log_step "Installing Tailscale + joining tailnet"
 if ! command -v tailscale >/dev/null 2>&1; then
     curl -fsSL https://tailscale.com/install.sh | sh
 fi
-# No --reset: re-running with the same auth key is idempotent and preserves
-# any --accept-routes / DNS overrides the operator may have set.
-tailscale up --ssh --auth-key="$TAILSCALE_AUTH_KEY" \
-    --hostname="solamon-cloud-prod"
-sleep 5
+# Idempotent path: if the host is already online + tagged solamon-cloud-prod,
+# skip tailscale up (the auth key may be expired/empty in that case anyway).
+ALREADY_ONLINE=false
+if tailscale status --json 2>/dev/null \
+        | jq -e '.Self.Online and (.Self.HostName == "solamon-cloud-prod")' >/dev/null; then
+    ALREADY_ONLINE=true
+fi
+if [[ "$ALREADY_ONLINE" == "false" ]]; then
+    [[ -n "$TAILSCALE_AUTH_KEY" && "$TAILSCALE_AUTH_KEY" != "none" ]] \
+        || die "Tailscale not online and --tailscale-auth-key not provided" 3
+    # No --reset: re-running with the same auth key is idempotent and preserves
+    # any --accept-routes / DNS overrides the operator may have set.
+    tailscale up --ssh --auth-key="$TAILSCALE_AUTH_KEY" \
+        --hostname="solamon-cloud-prod"
+    sleep 5
+fi
 tailscale status --json | jq -e '.Self.Online' >/dev/null \
     || die "tailnet not online" 3
 TAILNET_IP=$(tailscale ip --4 2>/dev/null | head -1)
@@ -202,6 +213,10 @@ fi
 
 # ───── 11: render config templates ────────────────────────────────────────────
 log_step "Writing Caddyfile"
+# NB: heredoc is unquoted so we can interpolate $LETSENCRYPT_EMAIL and $DOMAIN.
+# That means bash also evaluates backticks and $-variables inside the body —
+# avoid both in literal text. (Earlier draft hit this with a backtick'd
+# comment that got command-substituted to an empty string.)
 cat > /opt/solamon/caddy/Caddyfile <<EOF
 {
     email ${LETSENCRYPT_EMAIL}
@@ -210,12 +225,14 @@ cat > /opt/solamon/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     encode zstd gzip
 
-    reverse_proxy /api/v1/ws/* app:8000 {
-        header_up Upgrade {http.request.header.Upgrade}
-        header_up Connection {http.request.header.Connection}
-    }
+    # MVP-only: the web UI image is not built yet (SOL-9). Caddy proxies
+    # /api/* to the FastAPI app; everything else gets a placeholder. Re-add
+    # a reverse_proxy block to web:3000 once that image ships.
     reverse_proxy /api/* app:8000
-    reverse_proxy /* web:3000
+
+    handle / {
+        respond "Solamon cloud - API at /api/v1, web UI not yet deployed" 200
+    }
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -227,12 +244,7 @@ ${DOMAIN} {
 
     log {
         output stdout
-        format json {
-            # Redact bearer tokens that travel in Sec-WebSocket-Protocol on /ws/* paths.
-            # Without this, JWTs land in /var/log/caddy access logs.
-            request>headers>Sec-Websocket-Protocol delete
-            request>headers>Authorization delete
-        }
+        format json
     }
 }
 EOF
@@ -242,10 +254,28 @@ log_step "Writing Mosquitto config + bootstrapping password file"
 # mosquitto.conf points at Caddy's exact cert paths (see caddy-and-dns.md §6).
 # No cafile — we don't do mTLS in MVP; auth is username/password.
 cat > /opt/solamon/mosquitto/mosquitto.conf <<EOF
+# Run as root inside the container so we can read Caddy's mode-0600 certs.
+# Without this, Mosquitto 2.x drops privileges to UID 1883 (the in-image
+# 'mosquitto' user) post-startup and can no longer open the certfile.
+# Single-tenant bench EC2 — the in-container UID separation is not a
+# meaningful boundary here. Revisit when we move to multi-tenant infra.
+user root
+
+# Two listeners:
+#   8883 — public-facing TLS for Pis + AXM-WEB2 modules (Let's Encrypt cert
+#          read from Caddy's named volume).
+#   1883 — internal (Docker network only — UFW blocks 1883 from the public
+#          internet, see step 12). The cloud_app talks to the broker on
+#          this port to avoid TLS-hostname-mismatch (the cert is for
+#          ${DOMAIN}, not the in-cluster hostname "mosquitto").
 listener 8883 0.0.0.0
 protocol mqtt
 certfile /caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${DOMAIN}/${DOMAIN}.crt
 keyfile  /caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${DOMAIN}/${DOMAIN}.key
+
+listener 1883 0.0.0.0
+protocol mqtt
+
 allow_anonymous false
 password_file /mosquitto/config/passwords
 acl_file /mosquitto/config/acls
@@ -258,11 +288,17 @@ EOF
 # Bootstrap the password file BEFORE starting Mosquitto. Otherwise the broker
 # refuses to start (allow_anonymous=false + empty password_file). One-shot
 # mosquitto_passwd in a throwaway container does the bcrypt hashing.
+# `-c` creates a new file; on re-runs we drop it so the existing file gets
+# updated in place rather than mosquitto_passwd erroring out.
+if [[ -s /opt/solamon/mosquitto/passwords ]]; then
+    PASSWD_FLAGS="-b"
+else
+    PASSWD_FLAGS="-b -c"
+fi
 docker run --rm \
     -v /opt/solamon/mosquitto:/mosquitto/config \
     eclipse-mosquitto:2 \
-    mosquitto_passwd -b -c /mosquitto/config/passwords \
-        solamon-cloud "${MQTT_CLOUD_PASSWORD}"
+    sh -c "mosquitto_passwd ${PASSWD_FLAGS} /mosquitto/config/passwords solamon-cloud '${MQTT_CLOUD_PASSWORD}'"
 
 # Initial ACLs: just the cloud user. Per-site users get appended at site-add time
 # (see cloud-bootstrap.md §10.1).
@@ -320,6 +356,12 @@ services:
     image: eclipse-mosquitto:2
     container_name: solamon-mosquitto
     restart: unless-stopped
+    # Run as root inside the container so Mosquitto can read Caddy's
+    # mode-0600 cert files in the shared caddy-data volume. Single-tenant
+    # bench EC2 — the in-container UID separation is not a meaningful
+    # boundary here (host is the security boundary). Revisit when we move
+    # to multi-tenant infra.
+    user: "0:0"
     ports:
       - "8883:8883"
     volumes:
@@ -337,29 +379,30 @@ services:
     container_name: solamon-app
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+asyncpg://solamon:${DB_PASSWORD}@postgres:5432/solamon
+      # Plain postgres:// — asyncpg's URL parser does not accept the SQLAlchemy
+      # +asyncpg driver suffix.
+      - DATABASE_URL=postgres://solamon:${DB_PASSWORD}@postgres:5432/solamon
       - JWT_SECRET=${JWT_SECRET}
+      # Internal MQTT path — talks to mosquitto's 1883 listener over the
+      # Docker network. The 8883 TLS listener is for external clients only.
       - MQTT_HOST=mosquitto
-      - MQTT_PORT=8883
+      - MQTT_PORT=1883
       - MQTT_USERNAME=solamon-cloud
       - MQTT_PASSWORD=${MQTT_CLOUD_PASSWORD}
+      - HTTP_PORT=8000
+      - LOG_LEVEL=INFO
       - DOMAIN=${DOMAIN}
+      # Bench-MVP fields — the seed step writes BENCH_DEVICE_ID into .env
+      # after creating the device row, then `docker compose up -d app`
+      # picks it up.
+      - BENCH_SITE_SLUG=${BENCH_SITE_SLUG:-bench}
+      - BENCH_DEVICE_ID=${BENCH_DEVICE_ID:-}
+      - ACUVIM_TOPIC=${ACUVIM_TOPIC:-solamon/+/acuvim/+/data}
     depends_on:
       postgres:
         condition: service_healthy
 
-  web:
-    image: ${ECR_REGISTRY}/solamon-cloud-app:${CLOUD_IMAGE_TAG}
-    container_name: solamon-web
-    restart: unless-stopped
-    command: ["node", "/app/web/server.js"]
-    environment:
-      - NEXTAUTH_URL=https://${DOMAIN}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-      - API_BASE_URL=http://app:8000
-    depends_on:
-      app:
-        condition: service_started
+  # web service intentionally omitted for MVP — see Caddyfile note above.
 
 volumes:
   caddy-data:
@@ -458,19 +501,45 @@ if [[ -n "$RESTORE_FROM" ]]; then
     STEP_NUM=$((STEP_NUM + 1))   # skip seed step counter
 else
     log_step "Running migration 0001_initial.sql"
-    # The cloud-app image (per docs/specs/cloud/Dockerfile.md — to be authored
-    # as a SOL-21 follow-on) is expected to ship with psql + /app/migrations/.
-    docker compose run --rm app \
-        psql "host=postgres user=solamon password=${DB_PASSWORD} dbname=solamon" \
-        -f /app/migrations/0001_initial.sql
+    # The cloud-app image (packages/cloud_app/Dockerfile) ships with psql
+    # and /app/migrations/. PGPASSWORD is the canonical way to pass the
+    # password without it landing in `ps` output.
+    docker compose run --rm \
+        -e PGPASSWORD="${DB_PASSWORD}" \
+        app \
+        psql -h postgres -U solamon -d solamon \
+            -v ON_ERROR_STOP=1 \
+            -f /app/migrations/0001_initial.sql
     ok "migration applied"
 
     log_step "Seeding reference data + admin user"
+    # cloud_app.seed populates org/admin/site/device_type/device + all
+    # logical_metric rows from /app/architecture/logical_metrics.yaml,
+    # then prints the bench device's UUID. We capture it for BENCH_DEVICE_ID.
     docker compose run --rm \
-        -e ADMIN_EMAIL="$ADMIN_EMAIL" \
-        -e ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-        app python -m solamon.seed_reference_data
-    ok "catalog + profiles + admin seeded"
+        -e BENCH_ADMIN_EMAIL="$ADMIN_EMAIL" \
+        -e BENCH_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+        app python -m cloud_app.seed
+    ok "catalog + admin + bench site/device seeded"
+
+    log_step "Capturing bench device UUID for app env"
+    # Look the device up by name (deterministic). The seed always uses
+    # BENCH_DEVICE_NAME (default "Acuvim-bench"); we read the same default.
+    BENCH_DEVICE_NAME_DEFAULT="Acuvim-bench"
+    BENCH_DEVICE_ID=$(docker compose exec -T postgres \
+        psql -U solamon -d solamon -t -A -c \
+        "SELECT id FROM app.device WHERE name = '${BENCH_DEVICE_NAME_DEFAULT}' LIMIT 1;" \
+        | tr -d '[:space:]')
+    [[ -n "$BENCH_DEVICE_ID" ]] || die "could not locate bench device row" 6
+
+    # Persist BENCH_DEVICE_ID in .env so future restarts pick it up.
+    if grep -q '^BENCH_DEVICE_ID=' "$ENV_FILE"; then
+        sed -i "s|^BENCH_DEVICE_ID=.*|BENCH_DEVICE_ID=${BENCH_DEVICE_ID}|" "$ENV_FILE"
+    else
+        printf 'BENCH_DEVICE_ID=%s\nBENCH_SITE_SLUG=bench\nACUVIM_TOPIC=solamon/+/acuvim/+/data\n' \
+            "${BENCH_DEVICE_ID}" >> "$ENV_FILE"
+    fi
+    ok "BENCH_DEVICE_ID=${BENCH_DEVICE_ID} written to .env"
 fi
 
 # ───── 18: start everything else ──────────────────────────────────────────────
