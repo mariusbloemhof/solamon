@@ -209,6 +209,7 @@ th {
 .inline-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -521,13 +522,23 @@ p.subtext {
   gap: 6px;
 }
 
-.select {
+.select,
+.input {
   min-height: 34px;
+  width: 100%;
   padding: 7px 9px;
   border: 1px solid var(--border-strong);
   border-radius: 5px;
   background: var(--surface);
   color: var(--fg);
+}
+
+.compact-select {
+  min-height: 30px;
+  width: min(300px, 36vw);
+  max-width: 100%;
+  background: var(--bg);
+  font-size: 12px;
 }
 
 .table {
@@ -607,8 +618,13 @@ p.subtext {
   }
 
   .topbar-left,
-  .topbar-right {
+  .topbar-right,
+  .inline-row {
     flex-wrap: wrap;
+  }
+
+  .compact-select {
+    width: 100%;
   }
 
   .dashboard-grid {

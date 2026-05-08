@@ -28,8 +28,8 @@ This document is the **single source of truth for what actually exists in the re
 | Group `Developers` | Empty in MVP. |
 | Group `Operators` | Empty in MVP. `ReadOnlyAccess` attached. |
 | User `pi-ecr-puller` | ECR-pull-only on `solamon-edge-agent`. Inline policy `PiECRReadOnly`. Access key originally written to `D:\install\pi-ecr-puller-keys.txt` then moved to 1Password as **"Solamon pi-ecr-puller IAM keys"**. |
-| Role `EC2InstanceRole` | Used by the cloud EC2's instance profile. ECR pull on both repos + S3 read/write on backup bucket + CloudWatch metrics/logs. Inline policy `SolamonEC2Permissions`. |
-| Role `GitHubActionsECRPushRole` | Trusted by GitHub Actions OIDC for `mariusbloemhof/solamon` on tag pushes only (`refs/tags/v*`). Permissions: ECR push to both repos. ARN: `arn:aws:iam::556671502751:role/GitHubActionsECRPushRole` |
+| Role `EC2InstanceRole` | Used by the cloud EC2's instance profile. ECR pull on `solamon-cloud-app`, `solamon-web-ui`, and `solamon-edge-agent` + S3 read/write on backup bucket + CloudWatch metrics/logs. Inline policy `SolamonEC2Permissions`. |
+| Role `GitHubActionsECRPushRole` | Trusted by GitHub Actions OIDC for `mariusbloemhof/solamon` on tag pushes only (`refs/tags/v*`). Permissions: ECR push to `solamon-cloud-app`, `solamon-web-ui`, and `solamon-edge-agent`. ARN: `arn:aws:iam::556671502751:role/GitHubActionsECRPushRole` |
 | OIDC provider | `arn:aws:iam::556671502751:oidc-provider/token.actions.githubusercontent.com` |
 
 ### 1.2 S3
@@ -51,6 +51,7 @@ This document is the **single source of truth for what actually exists in the re
 |---|---|---|
 | `solamon-edge-agent` | `556671502751.dkr.ecr.af-south-1.amazonaws.com/solamon-edge-agent` | scan-on-push; lifecycle: keep last 5 tagged `v*`, expire untagged > 7 d, anything > 90 d |
 | `solamon-cloud-app` | `556671502751.dkr.ecr.af-south-1.amazonaws.com/solamon-cloud-app` | same lifecycle + scan |
+| `solamon-web-ui` | `556671502751.dkr.ecr.af-south-1.amazonaws.com/solamon-web-ui` | same lifecycle + scan |
 
 **No images have been pushed yet.** First image pushes happen via the GitHub Actions release workflow (which itself isn't committed yet — see `ecr-and-images.md §4`).
 
