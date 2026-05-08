@@ -5,9 +5,6 @@ in payloads.py; MQTT subscription lives in __main__/composition root.
 """
 from __future__ import annotations
 
-import json
-from typing import Any
-
 import asyncpg
 import structlog
 
@@ -49,15 +46,18 @@ async def process_telemetry_message(pool: asyncpg.Pool, payload: TelemetryPayloa
                     )
 
             # Snapshot upsert: merge the whole readings dict into JSONB.
-            metrics_json = json.dumps({k: v for k, v in payload.readings.items() if k in types})
+            # Pass the dict directly — the asyncpg jsonb codec (registered
+            # in db.pool._init_connection) handles JSON serialization. Calling
+            # json.dumps here would double-encode the value.
+            metrics_dict = {k: v for k, v in payload.readings.items() if k in types}
             await conn.execute(
                 """INSERT INTO app.device_snapshot (device_id, snapshot_time, metrics)
-                   VALUES ($1, $2, $3::jsonb)
+                   VALUES ($1, $2, $3)
                    ON CONFLICT (device_id) DO UPDATE
                      SET snapshot_time = EXCLUDED.snapshot_time,
                          metrics = app.device_snapshot.metrics || EXCLUDED.metrics
                    WHERE EXCLUDED.snapshot_time >= app.device_snapshot.snapshot_time""",
-                payload.device_id, payload.timestamp, metrics_json,
+                payload.device_id, payload.timestamp, metrics_dict,
             )
 
             # Touch device.last_seen_at + status.
