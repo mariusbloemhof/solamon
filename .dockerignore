@@ -15,7 +15,7 @@
 **/.eggs/
 **/*.egg-info/
 
-# Tests are not needed in the runtime image (pytest etc are dev-only deps).
+# Tests are not needed in runtime images.
 packages/*/tests/
 
 # Keep docs out of the build context.
@@ -25,6 +25,8 @@ evaluations/
 requirements/
 .serena/
 node_modules/
+.next/
+dist/
 *.md
 !packages/cloud_app/README.md
 
