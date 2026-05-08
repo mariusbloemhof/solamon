@@ -14,6 +14,7 @@ from cachetools import TTLCache
 from profile_loader.catalog import Catalog
 from profile_loader.profile import Profile
 
+from .buffer.store import Buffer
 from .modbus.client import ModbusClient
 from .modbus.codec import (
     decode_register_value,
@@ -108,30 +109,37 @@ async def handle_command(
     modbus: ModbusClient,
     command: CommandPayload,
     recent: TTLCache[str, dict[str, Any]],
+    buffer: Buffer | None = None,
     device_fault: str | None = None,
 ) -> dict[str, Any]:
     if command.id in recent:
         ack = recent[command.id]
         await publish_ack(client, site_config, ack)
         return ack
+    if buffer is not None:
+        persisted_ack = await buffer.get_processed_command_ack(command.id)
+        if persisted_ack is not None:
+            recent[command.id] = persisted_ack
+            await publish_ack(client, site_config, persisted_ack)
+            return persisted_ack
     if command.site_slug != site_config.site.slug or command.device_id != site_config.device.id:
         ack = _ack(command, site_config, "failed", error_message="site_or_device_mismatch")
-        recent[command.id] = ack
+        await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
         await publish_ack(client, site_config, ack)
         return ack
     if command.type != "set_value":
         ack = _ack(command, site_config, "failed", error_message="command_type_not_supported")
-        recent[command.id] = ack
+        await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
         await publish_ack(client, site_config, ack)
         return ack
     if _expired(command.expires_at):
         ack = _ack(command, site_config, "failed", error_message="received_after_expiry")
-        recent[command.id] = ack
+        await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
         await publish_ack(client, site_config, ack)
         return ack
     if device_fault:
         ack = _ack(command, site_config, "failed", error_message=f"device_fault: {device_fault}")
-        recent[command.id] = ack
+        await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
         await publish_ack(client, site_config, ack)
         return ack
 
@@ -164,7 +172,7 @@ async def handle_command(
                 "failed",
                 error_message=f"modbus_exception: {getattr(result, 'exception_code', None)}",
             )
-            recent[command.id] = ack
+            await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
             await publish_ack(client, site_config, ack)
             return ack
 
@@ -178,7 +186,7 @@ async def handle_command(
                 modbus_write_at=modbus_write_at,
                 confirmed_value={"value": value},
             )
-            recent[command.id] = ack
+            await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
             await publish_ack(client, site_config, ack)
             return ack
 
@@ -230,6 +238,22 @@ async def handle_command(
                 )
     except Exception as exc:
         ack = _ack(command, site_config, "failed", error_message=str(exc))
-    recent[command.id] = ack
+    await _remember_command(buffer=buffer, recent=recent, command=command, ack=ack)
     await publish_ack(client, site_config, ack)
     return ack
+
+
+async def _remember_command(
+    *,
+    buffer: Buffer | None,
+    recent: TTLCache[str, dict[str, Any]],
+    command: CommandPayload,
+    ack: dict[str, Any],
+) -> None:
+    recent[command.id] = ack
+    if buffer is not None:
+        await buffer.record_processed_command(
+            command_id=command.id,
+            expires_at=command.expires_at,
+            ack=ack,
+        )

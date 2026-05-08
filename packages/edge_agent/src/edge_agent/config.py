@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -55,7 +56,7 @@ def load_bootstrap(path: Path) -> BootstrapConfig:
     missing = [key for key in required if key not in raw]
     if missing:
         raise KeyError(f"missing bootstrap config fields: {', '.join(missing)}")
-    return BootstrapConfig(
+    config = BootstrapConfig(
         schema_version=str(raw["schema_version"]),
         site_slug=str(raw["site_slug"]),
         cloud_url=str(raw["cloud_url"]).rstrip("/"),
@@ -65,3 +66,25 @@ def load_bootstrap(path: Path) -> BootstrapConfig:
         log_level=str(raw.get("log_level", "INFO")),
         publish_interval_seconds=float(raw.get("publish_interval_seconds", 10.0)),
     )
+    _validate_bootstrap(config)
+    return config
+
+
+def _validate_bootstrap(config: BootstrapConfig) -> None:
+    if config.schema_version != "1.0":
+        raise ValueError(f"unsupported bootstrap schema_version: {config.schema_version}")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", config.site_slug):
+        raise ValueError("site_slug must be 2-63 chars of lowercase letters, digits, or hyphens")
+    parsed = urlparse(config.cloud_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("cloud_url must be an https URL")
+    if not config.bearer_token.strip():
+        raise ValueError("bearer_token must be non-empty")
+    if not config.device_host.strip() or any(char.isspace() for char in config.device_host):
+        raise ValueError("device_host must be a host name or IP address without whitespace")
+    if not 1 <= config.device_unit_id <= 247:
+        raise ValueError("device_unit_id must be in Modbus range 1..247")
+    if config.log_level.upper() not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise ValueError("log_level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL")
+    if config.publish_interval_seconds <= 0:
+        raise ValueError("publish_interval_seconds must be positive")

@@ -24,7 +24,7 @@ from .mqtt_runtime import mqtt_loop
 from .site_config import (
     SiteConfig,
     atomic_write_cache,
-    fetch_site_config,
+    fetch_site_config_with_cached_token,
     load_or_fetch_site_config,
 )
 
@@ -167,7 +167,7 @@ async def _config_refresh_loop(
         if stop.is_set():
             break
         try:
-            config = await fetch_site_config(bootstrap)
+            config = await fetch_site_config_with_cached_token(bootstrap, cache_path)
             atomic_write_cache(cache_path, config.raw)
             log.info("config.refresh_ok", site_slug=config.site.slug)
         except Exception as exc:

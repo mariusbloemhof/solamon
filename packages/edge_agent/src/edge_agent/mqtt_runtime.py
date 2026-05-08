@@ -97,7 +97,9 @@ async def heartbeat_loop(
             "buffer_depth_seconds": await buffer.compute_buffer_depth_seconds(),
             "last_modbus_success": metrics.last_modbus_success_iso(),
             "modbus_errors_per_minute": metrics.modbus_errors_per_minute_total(),
+            "modbus_errors_per_minute_by_block": metrics.modbus_errors_per_minute_by_block(),
             "halted_blocks": sorted(metrics.halted_blocks),
+            "device_fault": metrics.device_fault,
         }
         await client.publish(
             f"{site_config.mqtt.topic_prefix}/heartbeat",
@@ -119,6 +121,7 @@ async def command_loop(
     catalog: Catalog,
     modbus: ModbusClient,
     metrics: EdgeMetrics,
+    buffer: Buffer,
     recent: TTLCache[str, dict[str, Any]],
 ) -> None:
     async for message in messages:
@@ -135,6 +138,7 @@ async def command_loop(
             modbus=modbus,
             command=cmd,
             recent=recent,
+            buffer=buffer,
             device_fault=metrics.device_fault,
         )
 
@@ -185,6 +189,7 @@ async def mqtt_loop(
                             catalog,
                             modbus,
                             metrics,
+                            buffer,
                             recent,
                         ),
                     )

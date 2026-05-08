@@ -38,6 +38,24 @@ def test_load_bootstrap_rejects_missing_required_field(tmp_path: Path):
         load_bootstrap(path)
 
 
+def test_load_bootstrap_rejects_invalid_values(tmp_path: Path):
+    path = tmp_path / "bootstrap.yaml"
+    path.write_text(
+        """
+schema_version: "1.0"
+site_slug: Bad Slug
+cloud_url: http://cloud.amendi.dev
+bearer_token: secret
+device_host: 192.168.1.254
+device_unit_id: 248
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_bootstrap(path)
+
+
 def test_bootstrap_config_is_frozen():
     config = BootstrapConfig(
         schema_version="1.0",

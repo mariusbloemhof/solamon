@@ -5,6 +5,7 @@ from typing import ClassVar
 import pytest
 from cachetools import TTLCache
 
+from edge_agent.buffer.store import Buffer
 from edge_agent.command import CommandPayload, handle_command
 from edge_agent.config import BootstrapConfig
 from edge_agent.site_config import fallback_site_config
@@ -92,6 +93,39 @@ async def test_command_confirmed_and_deduplicated():
     )
 
     assert ack["status"] == "confirmed"
+    assert duplicate == ack
+    assert modbus.writes == 1
+
+
+@pytest.mark.asyncio
+async def test_command_deduplicates_from_persistent_cache(tmp_path):
+    profile, catalog, config = _setup()
+    mqtt = FakeMqtt()
+    modbus = FakeModbus()
+    buffer = Buffer(tmp_path / "buffer.sqlite3")
+    await buffer.init()
+
+    ack = await handle_command(
+        client=mqtt,
+        site_config=config,
+        profile=profile,
+        catalog=catalog,
+        modbus=modbus,
+        command=_command(),
+        recent=TTLCache(maxsize=1000, ttl=300),
+        buffer=buffer,
+    )
+    duplicate = await handle_command(
+        client=mqtt,
+        site_config=config,
+        profile=profile,
+        catalog=catalog,
+        modbus=modbus,
+        command=_command(),
+        recent=TTLCache(maxsize=1000, ttl=300),
+        buffer=buffer,
+    )
+
     assert duplicate == ack
     assert modbus.writes == 1
 

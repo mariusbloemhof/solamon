@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,19 @@ class SiteConfig:
         site = raw["site"]
         device = raw["device"]
         mqtt = raw["mqtt"]
+        site_slug = str(site["slug"])
+        device_id = str(device["id"])
+        topic_prefix = str(mqtt.get("topic_prefix", f"solamon/{site_slug}"))
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", site_slug):
+            raise ValueError("site.slug must be 2-63 chars of lowercase letters, digits, or hyphens")
+        if not device_id:
+            raise ValueError("device.id must be non-empty")
+        if not str(device["host"]).strip():
+            raise ValueError("device.host must be non-empty")
+        if not 1 <= int(device.get("unit_id", 1)) <= 247:
+            raise ValueError("device.unit_id must be in Modbus range 1..247")
+        if topic_prefix != f"solamon/{site_slug}":
+            raise ValueError("mqtt.topic_prefix must match solamon/{site.slug}")
         return cls(
             raw=raw,
             site=Site(
@@ -78,7 +92,7 @@ class SiteConfig:
                 username=str(mqtt["username"]),
                 password=str(mqtt["password"]),
                 client_id=str(mqtt.get("client_id", f"solamon-edge-{site['slug']}")),
-                topic_prefix=str(mqtt.get("topic_prefix", f"solamon/{site['slug']}")),
+                topic_prefix=topic_prefix,
             ),
         )
 
@@ -108,15 +122,30 @@ def fallback_site_config(bootstrap: BootstrapConfig) -> SiteConfig:
     return SiteConfig.from_dict(raw)
 
 
-async def fetch_site_config(bootstrap: BootstrapConfig) -> SiteConfig:
+async def fetch_site_config(bootstrap: BootstrapConfig, bearer_token: str | None = None) -> SiteConfig:
     url = f"{bootstrap.cloud_url}/api/v1/edge/config/{bootstrap.site_slug}"
-    headers = {"Authorization": f"Bearer {bootstrap.bearer_token}"}
+    headers = {"Authorization": f"Bearer {bearer_token or bootstrap.bearer_token}"}
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.get(url, headers=headers)
         if response.status_code in {401, 403}:
             raise PermissionError("bootstrap token rejected")
         response.raise_for_status()
         return SiteConfig.from_dict(response.json())
+
+
+async def fetch_site_config_with_cached_token(
+    bootstrap: BootstrapConfig,
+    cache_path: Path,
+) -> SiteConfig:
+    try:
+        return await fetch_site_config(bootstrap)
+    except PermissionError:
+        if not cache_path.exists():
+            raise
+        cached = load_cache(cache_path)
+        if cached.mqtt.password == bootstrap.bearer_token:
+            raise
+        return await fetch_site_config(bootstrap, bearer_token=cached.mqtt.password)
 
 
 def atomic_write_cache(path: Path, data: dict[str, Any]) -> None:
@@ -149,7 +178,7 @@ async def load_or_fetch_site_config(
     allow_fallback: bool = False,
 ) -> SiteConfig:
     try:
-        config = await fetch_site_config(bootstrap)
+        config = await fetch_site_config_with_cached_token(bootstrap, cache_path)
         atomic_write_cache(cache_path, config.raw)
         return config
     except PermissionError:

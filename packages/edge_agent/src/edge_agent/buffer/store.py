@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -9,6 +10,9 @@ from pathlib import Path
 from typing import Literal
 
 import aiosqlite
+import structlog
+
+log = structlog.get_logger()
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS reading_buffer (
@@ -27,6 +31,16 @@ CREATE TABLE IF NOT EXISTS reading_buffer (
 CREATE INDEX IF NOT EXISTS idx_buffer_unpublished
     ON reading_buffer (published, time)
     WHERE published = 0;
+
+CREATE TABLE IF NOT EXISTS processed_commands (
+    command_id TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    ack_json TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_processed_commands_expires
+    ON processed_commands (expires_at);
 """
 
 
@@ -80,6 +94,7 @@ class Buffer:
         if not payload:
             return
         async with aiosqlite.connect(self.path) as db:
+            before = db.total_changes
             await db.executemany(
                 """INSERT OR IGNORE INTO reading_buffer
                    (time, device_id, logical_metric_key, block_name, value, raw_value, quality)
@@ -87,6 +102,14 @@ class Buffer:
                 payload,
             )
             await db.commit()
+            inserted = db.total_changes - before
+        if inserted != len(payload):
+            log.warning(
+                "buffer.write_collision",
+                attempted=len(payload),
+                inserted=inserted,
+                ignored=len(payload) - inserted,
+            )
 
     async def fetch_unpublished(self, limit: int = 200) -> list[BufferRow]:
         async with aiosqlite.connect(self.path) as db:
@@ -129,6 +152,52 @@ class Buffer:
             await db.commit()
             return cursor.rowcount or 0
 
+    async def get_processed_command_ack(self, command_id: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """SELECT ack_json
+                   FROM processed_commands
+                   WHERE command_id = ?
+                     AND expires_at >= ?""",
+                (command_id, _utc_now()),
+            )
+            row = await cursor.fetchone()
+        return json.loads(row[0]) if row else None
+
+    async def record_processed_command(
+        self,
+        *,
+        command_id: str,
+        expires_at: str,
+        ack: dict,
+        grace: timedelta = timedelta(minutes=5),
+    ) -> None:
+        expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) + grace
+        expires_str = expires.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """INSERT OR REPLACE INTO processed_commands
+                   (command_id, expires_at, ack_json, processed_at)
+                   VALUES (?, ?, ?, ?)""",
+                (command_id, expires_str, json.dumps(ack), _utc_now()),
+            )
+            await db.commit()
+
+    async def prune_processed_commands(self) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "DELETE FROM processed_commands WHERE expires_at < ?",
+                (_utc_now(),),
+            )
+            await db.commit()
+            return cursor.rowcount or 0
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
 
 async def rotate_once(buffer: Buffer, max_age: timedelta = timedelta(days=7)) -> int:
-    return await buffer.delete_older_than(datetime.now(UTC) - max_age)
+    deleted_readings = await buffer.delete_older_than(datetime.now(UTC) - max_age)
+    await buffer.prune_processed_commands()
+    return deleted_readings
