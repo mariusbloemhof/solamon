@@ -92,3 +92,58 @@ def test_adapter_skips_unparseable_values():
     }
     p = parse_acuvim_payload(payload, site_slug="bench", device_id=uuid4())
     assert p.readings == {"voltage_l1_n": 230.5}
+
+
+# ─── Shape B (Johan's bench firmware): readings nested under `device`,
+# unit-suffixed param names, unix-epoch timestamp.
+
+JOHAN_FIRMWARE_SAMPLE = {
+    "timestamp": 1778252253,
+    "gateway": {"name": "AXM-WEB2", "model": "AXM-WEB2", "serial": "AN55101017"},
+    "device": {
+        "name": "",
+        "model": "Acuvim-L",
+        "serial": "CLD56020398",
+        "online": True,
+        "readings": [
+            {"param": "V1",         "value": "230.4",  "unit": "V"},
+            {"param": "V12",        "value": "399.1",  "unit": "V"},
+            {"param": "I1",         "value": "10.2",   "unit": "A"},
+            {"param": "In",         "value": "0.1",    "unit": "A"},
+            {"param": "P1",         "value": "2.35",   "unit": "kW"},
+            {"param": "Psum_kW",    "value": "7.05",   "unit": "kW"},
+            {"param": "Qsum_kvar",  "value": "0.42",   "unit": "kvar"},
+            {"param": "Ssum_kVA",   "value": "7.07",   "unit": "kVA"},
+            {"param": "PF",         "value": "0.997",  "unit": ""},
+            {"param": "Freq_Hz",    "value": "50.02",  "unit": "Hz"},
+        ],
+    },
+}
+
+
+def test_adapter_handles_nested_readings_under_device():
+    p = parse_acuvim_payload(JOHAN_FIRMWARE_SAMPLE, site_slug="bench", device_id=uuid4())
+    assert "voltage_l1_n" in p.readings
+    assert "active_power_total" in p.readings
+    assert "frequency_hz" in p.readings
+
+
+def test_adapter_handles_unit_suffixed_param_names_without_double_scaling():
+    """Psum_kW value 7.05 must land as 7.05 kW, not 0.00705 (no W→kW scale)."""
+    p = parse_acuvim_payload(JOHAN_FIRMWARE_SAMPLE, site_slug="bench", device_id=uuid4())
+    assert p.readings["active_power_total"] == pytest.approx(7.05)
+    assert p.readings["reactive_power_total"] == pytest.approx(0.42)
+    assert p.readings["apparent_power_total"] == pytest.approx(7.07)
+
+
+def test_adapter_handles_unix_epoch_timestamp():
+    p = parse_acuvim_payload(JOHAN_FIRMWARE_SAMPLE, site_slug="bench", device_id=uuid4())
+    # Pydantic v2 coerces unix-epoch int → tz-aware datetime.
+    assert p.timestamp.year == 2026
+
+
+def test_adapter_maps_line_line_voltage_and_neutral_current():
+    p = parse_acuvim_payload(JOHAN_FIRMWARE_SAMPLE, site_slug="bench", device_id=uuid4())
+    assert p.readings["voltage_l1_l2"] == pytest.approx(399.1)
+    assert p.readings["current_neutral"] == pytest.approx(0.1)
+    assert p.readings["active_power_l1"] == pytest.approx(2.35)
