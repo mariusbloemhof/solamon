@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, Gauge, Settings, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Activity, Bell, Gauge, Settings, ShieldCheck, SlidersHorizontal } from "lucide-react";
 
 export function AppShell({
   children,
@@ -25,6 +25,9 @@ export function AppShell({
           <Link href="/sites/bench">
             <Activity size={18} /> Devices
           </Link>
+          <Link href="/sites/bench">
+            <Bell size={18} /> Events
+          </Link>
           <Link className={active === "admin" ? "active" : ""} href="/sites/bench">
             <Settings size={18} /> Admin
           </Link>
@@ -38,6 +41,7 @@ export function AppShell({
       <main className="main">
         <header className="topbar">
           <div className="topbar-left">
+            <span className="subtext">ops / bench / overview</span>
             <span className="pill ok"><span className="dot" /> Connected</span>
             <span className="pill warn" title="Values are replayed from local fixtures until cloud API is ready.">
               Demo fixtures
