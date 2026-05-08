@@ -20,13 +20,13 @@ export function LoadChart({ data }: { data: ReadingPoint[] }) {
   return (
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Load profile chart">
       {[0, 1, 2, 3].map((n) => (
-        <line key={n} x1={padX} x2={width - padX} y1={padY + n * 62} y2={padY + n * 62} stroke="#e2e8f0" />
+        <line key={n} x1={padX} x2={width - padX} y1={padY + n * 62} y2={padY + n * 62} stroke="oklch(90% 0.008 240)" />
       ))}
-      <polyline points={points} fill="none" stroke="#0a1f44" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={points} fill="none" stroke="oklch(58% 0.16 145)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
       {data.map((d, i) => {
         const x = padX + (i / Math.max(data.length - 1, 1)) * (width - padX * 2);
         return (
-          <text key={d.t + i} x={x} y={height - 4} textAnchor="middle" fontSize="22" fill="#687386">
+          <text key={d.t + i} x={x} y={height - 4} textAnchor="middle" fontSize="18" fill="oklch(50% 0.018 240)">
             {d.t}
           </text>
         );

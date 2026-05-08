@@ -17,7 +17,7 @@ export function MiniLine({ data, height = 52 }: { data: ReadingPoint[]; height?:
 
   return (
     <svg className="spark" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Power trend">
-      <polyline points={points} fill="none" stroke="#116466" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={points} fill="none" stroke="oklch(58% 0.16 145)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
