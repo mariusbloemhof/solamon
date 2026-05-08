@@ -60,7 +60,12 @@ async def seed_bench() -> None:
         async with pool.acquire() as conn:
             # 1. Logical metric catalog — populated from the YAML so the
             #    Acuvim adapter's keys all resolve to a known data_type.
-            catalog = ProfileLoader().load_catalog(catalog_path)
+            #    Pass schema_dir so the loader works in containers / venvs
+            #    where its workspace-relative DEFAULT_SCHEMA_DIR doesn't
+            #    resolve. Schemas live alongside the YAML.
+            catalog = ProfileLoader(
+                schema_dir=Path(catalog_path).parent,
+            ).load_catalog(catalog_path)
             for m in catalog.all():
                 await conn.execute(
                     """INSERT INTO app.logical_metric

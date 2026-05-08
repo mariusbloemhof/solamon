@@ -1,0 +1,42 @@
+# Keep the build context lean. We only need pyproject.toml + src trees +
+# migrations + logical_metrics.yaml.
+
+.git/
+.venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/htmlcov/
+**/.coverage
+**/.coverage.*
+**/.eggs/
+**/*.egg-info/
+
+# Tests are not needed in the runtime image (pytest etc are dev-only deps).
+packages/*/tests/
+
+# Keep docs out of the build context.
+docs/
+discovery/
+evaluations/
+requirements/
+.serena/
+node_modules/
+*.md
+!packages/cloud_app/README.md
+
+# Local docker compose / bench artifacts.
+bench/
+.dockerignore
+Dockerfile
+
+# Workspace lockfiles aren't relied on by the container build.
+uv.lock
+poetry.lock
+
+# IDE
+.idea/
+.vscode/
