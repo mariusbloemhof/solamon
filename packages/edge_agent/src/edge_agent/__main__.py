@@ -10,8 +10,22 @@ from pathlib import Path
 
 import structlog
 
+from profile_loader.catalog import Catalog
+from profile_loader.loader import ProfileLoader
+from profile_loader.profile import Profile
+
+from .buffer.store import Buffer, rotate_once
 from .config import load_bootstrap
-from .publisher import publish_forever
+from .metrics import EdgeMetrics
+from .modbus.client import create_modbus_client
+from .modbus.poller import poll_block
+from .mqtt_runtime import mqtt_loop
+from .site_config import (
+    SiteConfig,
+    atomic_write_cache,
+    fetch_site_config,
+    load_or_fetch_site_config,
+)
 
 
 def _configure_logging(level: str) -> None:
@@ -30,8 +44,8 @@ def _configure_logging(level: str) -> None:
 
 async def _async_main() -> None:
     config_path = Path(os.environ.get("SOLAMON_CONFIG", "/etc/solamon/bootstrap.yaml"))
-    config = load_bootstrap(config_path)
-    _configure_logging(config.log_level)
+    bootstrap = load_bootstrap(config_path)
+    _configure_logging(bootstrap.log_level)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -41,7 +55,107 @@ async def _async_main() -> None:
         except NotImplementedError:
             pass
 
-    await publish_forever(config, stop)
+    cache_path = Path(os.environ.get("SOLAMON_SITE_CONFIG", "/etc/solamon/site_config.yaml"))
+    buffer_path = Path(os.environ.get("SOLAMON_BUFFER", "/var/lib/solamon/readings.sqlite3"))
+    site_config = await load_or_fetch_site_config(bootstrap, cache_path=cache_path)
+    profile, catalog = _load_profile_and_catalog(site_config)
+
+    buffer = Buffer(buffer_path)
+    await buffer.init()
+    metrics = EdgeMetrics()
+    modbus = create_modbus_client(site_config.device.host, site_config.device.port)
+    await modbus.connect()
+
+    tasks = [
+        asyncio.create_task(
+            poll_block(
+                profile=profile,
+                block=block,
+                client=modbus,
+                buffer=buffer,
+                metrics=metrics,
+                site_config=site_config,
+                stop=stop,
+            ),
+            name=f"poll:{block.name}",
+        )
+        for block in profile.read_blocks
+    ]
+    tasks.append(
+        asyncio.create_task(
+            mqtt_loop(
+                site_config=site_config,
+                profile=profile,
+                catalog=catalog,
+                buffer=buffer,
+                metrics=metrics,
+                modbus=modbus,
+                stop=stop,
+            ),
+            name="mqtt",
+        )
+    )
+    tasks.append(asyncio.create_task(_rotation_loop(buffer, stop), name="buffer-rotation"))
+    tasks.append(
+        asyncio.create_task(
+            _config_refresh_loop(bootstrap, cache_path, stop),
+            name="config-refresh",
+        )
+    )
+
+    await stop.wait()
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _load_profile_and_catalog(site_config: SiteConfig) -> tuple[Profile, Catalog]:
+    if site_config.profile and site_config.logical_metrics_catalog:
+        return (
+            Profile.from_dict(site_config.profile),
+            Catalog.from_dict(site_config.logical_metrics_catalog),
+        )
+    root = Path(__file__).resolve()
+    candidates = [
+        Path("/app/architecture"),
+        root.parents[4] / "architecture",
+        Path.cwd() / "architecture",
+    ]
+    architecture = next((path for path in candidates if path.exists()), candidates[-1])
+    loader = ProfileLoader(schema_dir=architecture)
+    catalog = loader.load_catalog(architecture / "logical_metrics.yaml")
+    profile = loader.load_profile(architecture / "profiles" / "acuvim_l.yaml", catalog)
+    return profile, catalog
+
+
+async def _rotation_loop(buffer: Buffer, stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        await rotate_once(buffer)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=600)
+        except TimeoutError:
+            pass
+
+
+async def _config_refresh_loop(
+    bootstrap,
+    cache_path: Path,
+    stop: asyncio.Event,
+) -> None:
+    log = structlog.get_logger()
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=300)
+        except TimeoutError:
+            pass
+        if stop.is_set():
+            break
+        try:
+            config = await fetch_site_config(bootstrap)
+            atomic_write_cache(cache_path, config.raw)
+            log.info("config.refresh_ok", site_slug=config.site.slug)
+        except Exception as exc:
+            log.warning("config.refresh_failed", error=str(exc))
 
 
 def main() -> None:
