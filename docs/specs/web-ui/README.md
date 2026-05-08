@@ -21,6 +21,7 @@ Audience: **Marius and Johan** (operations users) in MVP. Client-tier (read-only
 | [`components.md`](components.md) | Component inventory — shadcn/ui primitives, Tremor charts, custom dashboard cards, design tokens. |
 | [`live-data.md`](live-data.md) | RSC + TanStack Query + WebSocket flow — initial render, hydration, live updates, optimistic mutations, reconnection, error handling. |
 | [`auth.md`](auth.md) | Login UX, NextAuth credentials provider, session management, route protection middleware, logout. |
+| [`demo-readiness.md`](demo-readiness.md) | POC demo posture — fixture mode, first-run states, presentation polish, rehearsal checklist. |
 
 ## Stack summary (recap of main spec §9.1)
 
@@ -48,6 +49,7 @@ Audience: **Marius and Johan** (operations users) in MVP. Client-tier (read-only
 - Bench Day 6 deliverable: `/login` works; `/sites/{slug}` renders an empty layout with placeholder cards.
 - Bench Day 7-8 deliverable: dashboard cards render real data from the bench Acuvim.
 - Bench Day 9-10 deliverable: control panel issues commands; live state machine renders correctly.
+- POC readiness: [`demo-readiness.md`](demo-readiness.md) checklist passes before any client-facing rehearsal.
 
 ## Out of MVP scope
 

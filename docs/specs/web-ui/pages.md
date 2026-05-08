@@ -9,6 +9,7 @@ Cross-references:
 - API endpoints from [`../cloud/api-surface.md`](../cloud/api-surface.md)
 - Card layouts from [`../../../requirements/acuvim_mvp_register_scope.md`](../../../requirements/acuvim_mvp_register_scope.md) §J (the canonical dashboard layout)
 - Live-data plumbing from [`live-data.md`](live-data.md)
+- POC demo posture from [`demo-readiness.md`](demo-readiness.md)
 
 ---
 
@@ -34,6 +35,7 @@ All `/admin/*` routes require `role = admin` (the only operator role in MVP).
 A common layout wraps every page (except `/login`):
 
 - **Top bar:** project logo, current site selector (links to other sites — only one site in MVP), user menu (display name, logout)
+- **Demo/build signal:** build version + git SHA; if `NEXT_PUBLIC_DEMO_FIXTURES=true`, a visible `Demo fixtures` badge appears next to the connection pill
 - **Side nav:** "Dashboard" / "Control" / "Devices" / "Admin"
 - **Content area:** the page itself
 - **Toast region:** ephemeral notifications (success / error / info)
@@ -138,16 +140,20 @@ Implemented as a shared `AppShell` server component in `app/layout.tsx`. Per-pag
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
+**POC first viewport rule:** on a 1440 px wide display, the first viewport must show site name, connection pill, Active power, Energy today, Demand, and at least one power-quality signal without scrolling. This is the client-facing "yes, it is live" moment.
+
 **Render strategy:**
 - The page route (`app/sites/[slug]/page.tsx`) is a **server component**. It does the initial `GET /sites/{slug}` and `/snapshot` fetches and renders the cards with their initial values.
 - Each card is a **client component** (`"use client"`) that subscribes to the WS via the `useDeviceLiveStream` hook and re-renders on incoming messages.
 - The main chart's data is fetched client-side via TanStack Query (the time-window query is interactive; better to keep it on the client).
 
 **Acceptance:**
-- First paint shows real values within 200 ms of navigation (server-rendered).
+- First paint shows real values, not placeholders, when the cloud is reachable in the same region; on slower links, first values appear within 1 s of navigation.
 - WS connects within 1 s of mount; values update at the cadence of incoming readings.
 - Window selector on the main chart triggers a refetch; loading skeleton appears during the request.
 - WS drop: cards show a "stale" indicator after 30 s of no updates; auto-reconnect within 5 s of network recovery.
+- Missing telemetry never renders as zero; cards distinguish unavailable, stale, bad-quality, and real zero values.
+- Fixture-backed demo mode fills the same layout with clearly labelled fixture data and never hides the `Demo fixtures` badge.
 
 ---
 
@@ -203,6 +209,7 @@ Implemented as a shared `AppShell` server component in `app/layout.tsx`. Per-pag
 - Audit table appends the new command after terminal state.
 - Authorisation check: a `view`-only user gets 403 from the POST and the form shows "Insufficient permission" rather than crashing.
 - Operator can use the panel from a phone (responsive Tailwind).
+- In fixture mode, the command timeline is simulated, visibly labelled `simulated`, and no `POST /commands` request is made.
 
 ---
 
@@ -305,6 +312,8 @@ Every page has an `error.tsx` rendering a friendly error card with:
 
 **Fresh-site, never-seen-telemetry.** A newly-bootstrapped site whose Pi has not yet published its first heartbeat or telemetry — `device_snapshot.metrics` is empty (`{}`), `last_seen_at` is null. Dashboard cards detect this via `snapshot.snapshot_time === null` (the snapshot row exists but no readings have arrived) OR by the absence of a snapshot row entirely. Renders a single full-width card: "Waiting for first telemetry from the edge agent. The Pi typically takes ~60 s after bootstrap to publish — check `<EdgeHealthCard>` for connection state." Replace with the live dashboard automatically as soon as the first WS `snapshot` message arrives.
 
+The waiting panel includes a compact setup checklist: Pi heartbeat received, MQTT connected, device row configured, Modbus TCP reachable, first snapshot received. Unknown checks render as muted, failures as actionable links to `/sites/{slug}/devices/{device_id}` or `/sites/{slug}/control` when applicable.
+
 ### 12.4 Accessibility
 
 - All interactive elements keyboard-navigable.
@@ -324,5 +333,6 @@ Modern evergreen browsers: latest Chrome, Edge, Firefox, Safari. No IE11. Browse
 - [`components.md`](components.md) — what the cards / charts / layouts are made of
 - [`live-data.md`](live-data.md) — RSC + TanStack Query + WebSocket plumbing
 - [`auth.md`](auth.md) — login flow + session + route protection
+- [`demo-readiness.md`](demo-readiness.md) — POC rehearsal and first-run expectations
 - [`../cloud/api-surface.md`](../cloud/api-surface.md) — every endpoint these pages consume
 - [`../cloud/control-relay.md`](../cloud/control-relay.md) — the control state machine the panel renders

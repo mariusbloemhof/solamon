@@ -285,4 +285,5 @@ NextAuth's `expiresAt` field on the session is also checked client-side — if `
 
 - [`pages.md`](pages.md) — `/login` page
 - [`live-data.md`](live-data.md) §4.2 — WebSocket auth uses the same access token
+- [`demo-readiness.md`](demo-readiness.md) — login rehearsal screenshot and wrong-password path
 - [`../cloud/api-surface.md`](../cloud/api-surface.md) §3 — login / logout / me endpoints

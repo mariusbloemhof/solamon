@@ -90,6 +90,8 @@ Each custom card knows its own `device_id` (or `site_slug`); doesn't lift state 
 | `<RelativeTime>` | "5s ago" / "2 min ago" / "1 hour ago" auto-updating client component. **All instances share a single broadcast tick** (one `setInterval(1000)` at the React tree root, registered via a `RelativeTimeTickContext`); per-instance timers are forbidden because the dashboard renders 30+ instances and per-instance churn is wasteful. Components subscribe to the context, recompute their own label on each tick, and bail out of re-render when the rounded label hasn't changed. |
 | `<ConnectionPill>` | Tiny pill in the top bar showing live-WS connection state (connected / reconnecting / offline). |
 | `<DataFreshness>` | "Last update: 3s ago" indicator on dashboard cards; turns amber if last update is more than 30 s old. Underlying state hook described in [`live-data.md`](live-data.md) §6.1. |
+| `<DemoFixturesBadge>` | Visible top-bar badge rendered only when `NEXT_PUBLIC_DEMO_FIXTURES=true`. Hover/focus text explains that current values are fixture/replay data. Never appears in production mode. |
+| `<FirstTelemetryChecklist>` | Full-width fresh-site panel showing Pi heartbeat, MQTT connection, device configuration, Modbus reachability, and first snapshot status. Used before the dashboard has real metrics. |
 | `<HexAddressBadge>` | Renders a Modbus register address as `0x0600` in a monospaced badge. Used in the Profile detail page. Renderer is responsible for the integer→hex conversion; only specific *address fields* (see [`pages.md`](pages.md) §9 for the allowlist) are rendered as hex, NOT every integer in the profile. |
 | `<LoadMoreButton>` | Cursor-paginated "Load more" trigger for any table backed by a cursor API (commands history, audit log, devices list). Replaces a page-numbered pager — the cloud's pagination is `?cursor=<opaque>` per `../cloud/api-surface.md §4` and has no concept of "page 5 of 12". On click: re-fetches with `?cursor=<next_cursor>`; appends the new page to the existing list; hides the button when `next_cursor` is null. |
 
@@ -140,6 +142,10 @@ Tailwind config (`tailwind.config.ts`) extends the default with:
 **Numeric typography:** all values are tabular-nums (`font-variant-numeric: tabular-nums`) so digits don't shift width as values change. Tailwind's `font-tabular-nums` utility.
 
 **Data density:** information-dense by default. Operators want every relevant number on screen at once; we don't enforce 24-px line heights and acres of whitespace.
+
+**Missing-value rendering:** no dashboard component may coerce `null`, `undefined`, `NaN`, or missing metric keys to `0`. Render a muted dash plus `Unavailable`, keep the last good value if one exists and mark it stale, or show the metric quality state (`uncertain` / `bad`) when the cloud supplies it. This prevents the POC from accidentally presenting "no telemetry" as "zero load".
+
+**Stable live layout:** cards reserve fixed space for their primary number, unit, sparkline, freshness label, and status badge. A live update must not change card height or push neighbouring cards around.
 
 ## 6. Conventions
 
@@ -201,3 +207,4 @@ Component-level testing planned via Vitest + React Testing Library; not specifie
 - [`pages.md`](pages.md) — which page uses which component
 - [`live-data.md`](live-data.md) — `useDeviceLiveStream` and `useCommandLiveStream` hook contracts
 - [`auth.md`](auth.md) — `<UserMenu>` and protected-route behaviour
+- [`demo-readiness.md`](demo-readiness.md) — fixture badge, first telemetry checklist, presentation polish
