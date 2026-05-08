@@ -521,8 +521,10 @@ p.subtext {
   gap: 6px;
 }
 
-.select {
+.select,
+.input {
   min-height: 34px;
+  width: 100%;
   padding: 7px 9px;
   border: 1px solid var(--border-strong);
   border-radius: 5px;

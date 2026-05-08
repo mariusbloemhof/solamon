@@ -5,24 +5,61 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { LoadChart } from "@/components/LoadChart";
 import { MiniLine } from "@/components/MiniLine";
-import { fixture, jitterSnapshot } from "@/lib/fixtures";
+import { currentUserLabel, loadDashboardSnapshot } from "@/lib/api";
+import { fixture, jitterSnapshot, type DashboardSnapshot } from "@/lib/fixtures";
 import { fmt, nowTime } from "@/lib/format";
 
-export default function DashboardClient() {
+export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
   const [tick, setTick] = useState(0);
-  const data = useMemo(() => jitterSnapshot(fixture, tick), [tick]);
+  const [cloudData, setCloudData] = useState<DashboardSnapshot | null>(null);
+  const [cloudError, setCloudError] = useState("");
+  const [userLabel, setUserLabel] = useState("operator");
+  const data = useMemo(
+    () => (cloudData ? cloudData : jitterSnapshot(fixture, tick)),
+    [cloudData, tick]
+  );
+  const dataMode = cloudData ? "cloud" : "fixtures";
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 2000);
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    setUserLabel(currentUserLabel());
+
+    async function refresh() {
+      try {
+        const snapshot = await loadDashboardSnapshot(slug);
+        if (!cancelled) {
+          setCloudData(snapshot);
+          setCloudError("");
+        }
+      } catch (exc) {
+        if (!cancelled) {
+          setCloudError(exc instanceof Error ? exc.message : "Cloud data unavailable");
+        }
+      }
+    }
+
+    refresh();
+    const id = window.setInterval(refresh, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [slug]);
+
   return (
-    <AppShell active="dashboard">
+    <AppShell active="dashboard" dataMode={dataMode} userLabel={userLabel}>
       <div className="page-heading">
         <div>
           <h1>{data.site.name}</h1>
-          <p>{data.site.deviceName} - {data.site.location} - live fixture replay</p>
+          <p>
+            {data.site.deviceName} - {data.site.location} -{" "}
+            {cloudData ? "live cloud telemetry" : `fixture fallback${cloudError ? ` (${cloudError})` : ""}`}
+          </p>
         </div>
         <div className="inline-row">
           <span className="pill ok"><RadioTower size={14} /> Last update {nowTime()}</span>
@@ -78,15 +115,17 @@ export default function DashboardClient() {
         <div className="card span-5">
           <div className="card-title">
             <span>POC readiness</span>
-            <span className="pill ok">Ready to rehearse</span>
+            <span className={cloudData ? "pill ok" : "pill warn"}>
+              {cloudData ? "Live data attached" : "Waiting for cloud data"}
+            </span>
           </div>
           <div className="timeline">
             {[
-              "Login and protected route",
-              "Fixture dashboard first viewport",
-              "Live card update without refresh",
-              "Demand-window control simulation",
-              "Offline state copy"
+              cloudData ? "Authenticated cloud API session" : "Fixture fallback active",
+              "Device snapshot adapter",
+              "Active-power readings range query",
+              "Live refresh polling every 10s",
+              "Control screen remains demo until cloud command endpoint lands"
             ].map((item) => (
               <div className="timeline-row done" key={item}>
                 <span className="timeline-dot" />
