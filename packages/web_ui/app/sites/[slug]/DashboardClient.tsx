@@ -5,27 +5,96 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { LoadChart } from "@/components/LoadChart";
 import { MiniLine } from "@/components/MiniLine";
-import { fixture, jitterSnapshot } from "@/lib/fixtures";
+import { currentUserLabel, loadDashboardSnapshot } from "@/lib/api";
+import { fixture, jitterSnapshot, type DashboardSnapshot } from "@/lib/fixtures";
 import { fmt, nowTime } from "@/lib/format";
 
-export default function DashboardClient() {
+const deviceSelectionKey = (slug: string) => `solamon-selected-device:${slug}`;
+
+export default function DashboardClient({ slug = "bench" }: { slug?: string }) {
   const [tick, setTick] = useState(0);
-  const data = useMemo(() => jitterSnapshot(fixture, tick), [tick]);
+  const [cloudData, setCloudData] = useState<DashboardSnapshot | null>(null);
+  const [cloudError, setCloudError] = useState("");
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [userLabel, setUserLabel] = useState("operator");
+  const data = useMemo(
+    () => (cloudData ? cloudData : jitterSnapshot(fixture, tick)),
+    [cloudData, tick]
+  );
+  const dataMode = cloudData ? "cloud" : "fixtures";
+  const deviceOptions = data.site.devices;
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 2000);
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    setSelectedDeviceId(window.localStorage.getItem(deviceSelectionKey(slug)) ?? "");
+  }, [slug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setUserLabel(currentUserLabel());
+
+    async function refresh() {
+      try {
+        const snapshot = await loadDashboardSnapshot(slug, selectedDeviceId || undefined);
+        if (!cancelled) {
+          setCloudData(snapshot);
+          setCloudError("");
+          if (!selectedDeviceId) {
+            window.localStorage.setItem(deviceSelectionKey(slug), snapshot.site.deviceId);
+            setSelectedDeviceId(snapshot.site.deviceId);
+          }
+        }
+      } catch (exc) {
+        if (!cancelled) {
+          setCloudError(exc instanceof Error ? exc.message : "Cloud data unavailable");
+        }
+      }
+    }
+
+    refresh();
+    const id = window.setInterval(refresh, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [slug, selectedDeviceId]);
+
+  function onDeviceChange(deviceId: string) {
+    window.localStorage.setItem(deviceSelectionKey(slug), deviceId);
+    setSelectedDeviceId(deviceId);
+  }
+
   return (
-    <AppShell active="dashboard">
+    <AppShell active="dashboard" dataMode={dataMode} userLabel={userLabel}>
       <div className="page-heading">
         <div>
           <h1>{data.site.name}</h1>
-          <p>{data.site.deviceName} - {data.site.location} - live fixture replay</p>
+          <p>
+            {data.site.deviceName} - {data.site.location} -{" "}
+            {cloudData ? "live cloud telemetry" : `fixture fallback${cloudError ? ` (${cloudError})` : ""}`}
+          </p>
         </div>
         <div className="inline-row">
+          <select
+            aria-label="Select device"
+            className="select compact-select"
+            value={selectedDeviceId || data.site.deviceId}
+            onChange={(event) => onDeviceChange(event.target.value)}
+          >
+            {deviceOptions.map((device) => (
+              <option key={device.id} value={device.id}>
+                {device.label}
+              </option>
+            ))}
+          </select>
           <span className="pill ok"><RadioTower size={14} /> Last update {nowTime()}</span>
+          <span className={`pill ${deviceStatusClass(deviceOptions.find((device) => device.id === data.site.deviceId)?.status)}`}>
+            {deviceOptions.find((device) => device.id === data.site.deviceId)?.status ?? "unknown"}
+          </span>
           <span className="pill muted">{data.site.deviceId}</span>
         </div>
       </div>
@@ -78,15 +147,17 @@ export default function DashboardClient() {
         <div className="card span-5">
           <div className="card-title">
             <span>POC readiness</span>
-            <span className="pill ok">Ready to rehearse</span>
+            <span className={cloudData ? "pill ok" : "pill warn"}>
+              {cloudData ? "Live data attached" : "Waiting for cloud data"}
+            </span>
           </div>
           <div className="timeline">
             {[
-              "Login and protected route",
-              "Fixture dashboard first viewport",
-              "Live card update without refresh",
-              "Demand-window control simulation",
-              "Offline state copy"
+              cloudData ? "Authenticated cloud API session" : "Fixture fallback active",
+              "Device snapshot adapter",
+              "Active-power readings range query",
+              "Live refresh polling every 10s",
+              "Control screen remains demo until cloud command endpoint lands"
             ].map((item) => (
               <div className="timeline-row done" key={item}>
                 <span className="timeline-dot" />
@@ -99,6 +170,12 @@ export default function DashboardClient() {
       </div>
     </AppShell>
   );
+}
+
+function deviceStatusClass(status?: string): string {
+  if (status === "online") return "ok";
+  if (status === "offline" || status === "unknown") return "muted";
+  return "warn";
 }
 
 function MetricCard({

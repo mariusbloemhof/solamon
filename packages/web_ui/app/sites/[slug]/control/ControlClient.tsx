@@ -3,6 +3,7 @@
 import { CheckCircle2, Clock, Radio, RotateCcw, Send, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { authToken, currentUserLabel } from "@/lib/api";
 import { fixture } from "@/lib/fixtures";
 import { nowTime } from "@/lib/format";
 
@@ -11,6 +12,8 @@ type Step = "issued" | "sent" | "edge" | "confirmed";
 export default function ControlClient() {
   const [windowMinutes, setWindowMinutes] = useState(String(fixture.metrics.demandWindowMinutes));
   const [active, setActive] = useState<Step | "idle">("idle");
+  const hasCloudSession = typeof window !== "undefined" && Boolean(authToken());
+  const userLabel = typeof window !== "undefined" ? currentUserLabel() : "operator";
   const [history, setHistory] = useState([
     { time: "14:23", user: "Marius", type: "set_demand_window", param: "15 min", status: "confirmed", readback: "15 min" },
     { time: "13:51", user: "Johan", type: "set_demand_window", param: "30 min", status: "confirmed", readback: "30 min" }
@@ -57,13 +60,13 @@ export default function ControlClient() {
   }
 
   return (
-    <AppShell active="control">
+    <AppShell active="control" dataMode={hasCloudSession ? "cloud" : "fixtures"} userLabel={userLabel}>
       <div className="page-heading">
         <div>
           <h1>Demand window control</h1>
           <p>POC command target: Acuvim L demand sliding window register 0x010C.</p>
         </div>
-        <span className="pill warn">simulated fixture command</span>
+        <span className="pill warn">command endpoint pending</span>
       </div>
 
       <div className="grid dashboard-grid">
@@ -85,7 +88,7 @@ export default function ControlClient() {
               Apply {windowMinutes} minute window
             </button>
             <p className="subtext">
-              Fixture mode never calls the cloud POST endpoint. The real flow will persist the command, publish over MQTT, write Modbus, then confirm by read-back.
+              The cloud read endpoints are wired for live telemetry. Command issuing stays simulated until the FastAPI command endpoint lands.
             </p>
           </div>
         </div>

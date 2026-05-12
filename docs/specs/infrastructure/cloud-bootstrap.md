@@ -30,6 +30,7 @@ The contract for `solamon-cloud-bootstrap.sh` — the script that takes a fresh 
        --domain "cloud.solamon.bloemhof.dev" \
        --tailscale-auth-key "tskey-auth-..." \
        --cloud-image-tag "v0.1.0" \
+       --web-image-tag "v0.1.0" \
        --letsencrypt-email "admin@bloemhof.dev"
    ```
 
@@ -59,6 +60,7 @@ The contract for `solamon-cloud-bootstrap.sh` — the script that takes a fresh 
 | `--domain` | DNS name | Where the cloud is reachable |
 | `--tailscale-auth-key` | `tskey-auth-...` | Pre-authorised, tagged `tag:cloud` |
 | `--cloud-image-tag` | string | ECR tag for the cloud-app image, e.g. `v0.1.0`. Required (don't ship `latest` to prod). |
+| `--web-image-tag` | string | ECR tag for the web-ui image. Defaults to `--cloud-image-tag` when omitted. |
 | `--letsencrypt-email` | email | Account email for Let's Encrypt |
 | `--admin-email` | email | (Optional) Admin user's email. Default: `admin@solamon`. |
 | `--db-password` | secret string | (Optional) Postgres password. If omitted, generated and printed. |

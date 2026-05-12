@@ -1,12 +1,16 @@
 import Link from "next/link";
-import { Activity, Gauge, Settings, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Activity, Bell, Gauge, Settings, ShieldCheck, SlidersHorizontal } from "lucide-react";
 
 export function AppShell({
   children,
-  active = "dashboard"
+  active = "dashboard",
+  dataMode = "fixtures",
+  userLabel = "operator"
 }: {
   children: React.ReactNode;
   active?: "dashboard" | "control" | "admin";
+  dataMode?: "cloud" | "fixtures";
+  userLabel?: string;
 }) {
   return (
     <div className="app-shell">
@@ -25,6 +29,9 @@ export function AppShell({
           <Link href="/sites/bench">
             <Activity size={18} /> Devices
           </Link>
+          <Link href="/sites/bench">
+            <Bell size={18} /> Events
+          </Link>
           <Link className={active === "admin" ? "active" : ""} href="/sites/bench">
             <Settings size={18} /> Admin
           </Link>
@@ -38,15 +45,15 @@ export function AppShell({
       <main className="main">
         <header className="topbar">
           <div className="topbar-left">
-            <span className="pill ok"><span className="dot" /> Connected</span>
-            <span className="pill warn" title="Values are replayed from local fixtures until cloud API is ready.">
-              Demo fixtures
+            <span className="subtext">ops / bench / overview</span>
+            <span className={dataMode === "cloud" ? "pill ok" : "pill warn"}>
+              <span className="dot" /> {dataMode === "cloud" ? "Cloud data" : "Fixture fallback"}
             </span>
             <span className="pill muted">bench</span>
           </div>
           <div className="topbar-right">
             <ShieldCheck size={17} color="#10b981" />
-            <span className="subtext">admin@bench.local</span>
+            <span className="subtext">{userLabel}</span>
             <Link className="button secondary" href="/login">Sign out</Link>
           </div>
         </header>
