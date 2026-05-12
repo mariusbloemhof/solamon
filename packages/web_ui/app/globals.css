@@ -534,6 +534,178 @@ th {
   margin-top: 4px;
 }
 
+.brief-panel,
+.assessment-brief {
+  display: grid;
+  align-items: stretch;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(120deg, color-mix(in oklch, var(--accent-soft) 45%, transparent), transparent 46%),
+    var(--surface);
+}
+
+.brief-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.8fr);
+}
+
+.assessment-brief {
+  grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(120px, 0.45fr)) minmax(150px, 0.55fr);
+}
+
+.brief-copy {
+  min-width: 0;
+}
+
+.brief-copy h2 {
+  margin: 3px 0 0;
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.brief-copy p {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.brief-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.brief-microcopy {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.brief-microcopy strong {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.brief-microcopy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.energy-flow {
+  display: grid;
+  grid-template-columns: 1fr minmax(42px, 0.35fr) 1fr minmax(42px, 0.35fr) 1fr;
+  align-items: center;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in oklch, var(--bg) 72%, var(--surface));
+}
+
+.flow-node {
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  min-height: 94px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.flow-node span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.flow-node strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+  line-height: 1.05;
+}
+
+.flow-node.solution {
+  border-color: color-mix(in oklch, var(--accent) 36%, var(--border));
+  background: var(--accent-soft);
+}
+
+.flow-line {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: var(--border-strong);
+}
+
+.flow-line span {
+  position: absolute;
+  inset-block: 0;
+  left: -45%;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: flowPulse 2.4s linear infinite;
+}
+
+.fit-score {
+  display: grid;
+  place-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.fit-score > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fit-ring {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  padding-top: 21px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, var(--surface) 58%, transparent 60%),
+    conic-gradient(var(--accent) var(--score), var(--border) 0);
+  color: var(--fg);
+}
+
+.fit-ring strong {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.fit-ring span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .assessment-strip {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -864,6 +1036,19 @@ p.subtext {
   background-size: 100% 65px, 90px 100%;
 }
 
+.chart-threshold {
+  stroke-width: 2;
+  stroke-dasharray: 8 8;
+}
+
+.chart-threshold.peak {
+  stroke: oklch(72% 0.16 80);
+}
+
+.chart-threshold.average {
+  stroke: oklch(58% 0.16 145);
+}
+
 .sizing-list,
 .insight-list,
 .quality-grid {
@@ -929,6 +1114,12 @@ p.subtext {
   height: 52px;
   margin-top: 10px;
   border-top: 1px solid var(--border);
+}
+
+@keyframes flowPulse {
+  to {
+    transform: translateX(330%);
+  }
 }
 
 .timeline {
@@ -1114,6 +1305,11 @@ p.subtext {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
+
+  .brief-panel,
+  .assessment-brief {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 680px) {
@@ -1209,5 +1405,30 @@ p.subtext {
 
   .quality-grid {
     grid-template-columns: 1fr;
+  }
+
+  .brief-metrics,
+  .energy-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-line {
+    width: 2px;
+    height: 30px;
+    margin: 0 auto;
+  }
+
+  .flow-line span {
+    inset-inline: 0;
+    top: -45%;
+    width: 100%;
+    height: 45%;
+    animation-name: flowPulseVertical;
+  }
+}
+
+@keyframes flowPulseVertical {
+  to {
+    transform: translateY(330%);
   }
 }

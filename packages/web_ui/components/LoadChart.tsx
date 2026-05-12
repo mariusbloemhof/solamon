@@ -1,6 +1,14 @@
 import type { ReadingPoint } from "@/lib/fixtures";
 
-export function LoadChart({ data }: { data: ReadingPoint[] }) {
+export function LoadChart({
+  data,
+  averageKw,
+  peakKw
+}: {
+  data: ReadingPoint[];
+  averageKw?: number;
+  peakKw?: number;
+}) {
   const width = 900;
   const height = 260;
   const padX = 36;
@@ -19,12 +27,27 @@ export function LoadChart({ data }: { data: ReadingPoint[] }) {
     .map((point) => `${point.x},${point.y}`)
     .join(" ");
   const area = `${padX},${height - padY} ${points} ${width - padX},${height - padY}`;
+  const yFor = (kw: number) => padY + (1 - (kw - min) / range) * (height - padY * 2);
+  const averageY = typeof averageKw === "number" ? yFor(averageKw) : null;
+  const peakY = typeof peakKw === "number" ? yFor(peakKw) : null;
 
   return (
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Load profile chart">
       {[0, 1, 2, 3, 4].map((n) => (
         <line key={n} x1={padX} x2={width - padX} y1={padY + n * 46} y2={padY + n * 46} stroke="oklch(90% 0.008 240)" />
       ))}
+      {peakY !== null ? (
+        <>
+          <line className="chart-threshold peak" x1={padX} x2={width - padX} y1={peakY} y2={peakY} />
+          <text x={width - padX} y={Math.max(16, peakY - 7)} textAnchor="end" fontSize="14" fill="oklch(45% 0.12 80)">peak {Math.round(peakKw!)} kW</text>
+        </>
+      ) : null}
+      {averageY !== null ? (
+        <>
+          <line className="chart-threshold average" x1={padX} x2={width - padX} y1={averageY} y2={averageY} />
+          <text x={width - padX} y={Math.min(height - 36, averageY + 18)} textAnchor="end" fontSize="14" fill="oklch(42% 0.13 145)">avg {Math.round(averageKw!)} kW</text>
+        </>
+      ) : null}
       <polygon points={area} fill="oklch(94% 0.06 145)" opacity="0.7" />
       <polyline points={points} fill="none" stroke="oklch(58% 0.16 145)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
       {pointList.map((point, i) => {

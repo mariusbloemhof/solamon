@@ -8,7 +8,9 @@ import {
   Clock3,
   Download,
   Gauge,
+  Lightbulb,
   RadioTower,
+  ShieldCheck,
   TrendingUp,
   Zap
 } from "lucide-react";
@@ -33,6 +35,15 @@ type Assessment = {
   recommendedSolarKwp: number;
   recommendedInverterKw: number;
   recommendedBatteryKwh: number;
+  daytimeAverageKw: number;
+  overnightAverageKw: number;
+  rampKw: number;
+  peakShaveKw: number;
+  captureHours: number;
+  confidencePct: number;
+  qualityScorePct: number;
+  solarOffsetPct: number;
+  recommendationLabel: string;
 };
 
 export default function DashboardClient({
@@ -157,6 +168,8 @@ export default function DashboardClient({
           </div>
         </div>
 
+        <ExecutiveSummary data={data} assessment={assessment} lastUpdateLabel={lastUpdateLabel} />
+
         <div className="gauges">
           <GaugeTile
             label="Total load"
@@ -210,7 +223,7 @@ export default function DashboardClient({
               <span>Load profile</span>
               <span className="pill muted">24h live trace</span>
             </div>
-            <LoadChart data={data.series} />
+            <LoadChart data={data.series} averageKw={assessment.averageKw} peakKw={assessment.peakKw} />
           </div>
           <div className="card span-4">
             <div className="card-title">
@@ -295,6 +308,8 @@ export default function DashboardClient({
         </span>
       </section>
 
+      <AssessmentBrief data={data} assessment={assessment} />
+
       <div className="gauges">
         <GaugeTile
           label="Total load"
@@ -348,7 +363,7 @@ export default function DashboardClient({
             <span>Consumption profile</span>
             <span className="pill muted">{windowLabel.toLowerCase()} load trace</span>
           </div>
-          <LoadChart data={data.series} />
+          <LoadChart data={data.series} averageKw={assessment.averageKw} peakKw={assessment.peakKw} />
         </div>
 
         <div className="card span-4">
@@ -360,6 +375,7 @@ export default function DashboardClient({
             <SizingRow label="Solar array" value={`${fmt(assessment.recommendedSolarKwp)} kWp`} />
             <SizingRow label="Inverter capacity" value={`${fmt(assessment.recommendedInverterKw)} kW`} />
             <SizingRow label="Usable battery" value={`${fmt(assessment.recommendedBatteryKwh)} kWh`} />
+            <SizingRow label="Peak shaving target" value={`${fmt(assessment.peakShaveKw)} kW`} />
           </div>
           <p className="subtext">
             Preliminary only. Confidence improves as the field meter fills the 30-day profile.
@@ -398,6 +414,38 @@ export default function DashboardClient({
           value={fmt(data.metrics.powerFactor[3] ?? 0, 2)}
           unit=""
           detail="Total meter power factor"
+        />
+        <MetricCard
+          className="span-3"
+          title="Daytime load"
+          icon={<Lightbulb size={18} />}
+          value={fmt(assessment.daytimeAverageKw)}
+          unit="kW"
+          detail={`Solar offset signal ${fmt(assessment.solarOffsetPct, 0)}%`}
+        />
+        <MetricCard
+          className="span-3"
+          title="Overnight base"
+          icon={<ShieldCheck size={18} />}
+          value={fmt(assessment.overnightAverageKw)}
+          unit="kW"
+          detail="Storage floor and essential load clue"
+        />
+        <MetricCard
+          className="span-3"
+          title="Ramp exposure"
+          icon={<TrendingUp size={18} />}
+          value={fmt(assessment.rampKw)}
+          unit="kW"
+          detail="Largest adjacent sample movement"
+        />
+        <MetricCard
+          className="span-3"
+          title="Readiness"
+          icon={<RadioTower size={18} />}
+          value={fmt(assessment.confidencePct, 0)}
+          unit="%"
+          detail={`${fmt(assessment.captureHours, 0)} captured hours`}
         />
 
         <PhaseCard title="Voltage per phase" className="span-3" labels={["L1", "L2", "L3"]} values={data.metrics.voltages} unit="V" max={253} />
@@ -470,6 +518,95 @@ function NoLiveData({ callbackPath, message }: { callbackPath: string; message: 
   );
 }
 
+function ExecutiveSummary({
+  data,
+  assessment,
+  lastUpdateLabel
+}: {
+  data: DashboardSnapshot;
+  assessment: Assessment;
+  lastUpdateLabel: string;
+}) {
+  return (
+    <section className="brief-panel">
+      <div className="brief-copy">
+        <span className="section-label">Decision signal</span>
+        <h2>{assessment.recommendationLabel}</h2>
+        <p>
+          Current load is {fmt(data.metrics.activePowerKw)} kW against a measured peak of {fmt(assessment.peakKw)} kW,
+          with {fmt(assessment.qualityScorePct, 0)}% telemetry quality confidence for a live sizing conversation.
+        </p>
+        <div className="brief-metrics">
+          <QualityStat label="Capture" value={`${fmt(assessment.captureHours, 0)} h`} />
+          <QualityStat label="Peak shave" value={`${fmt(assessment.peakShaveKw)} kW`} />
+          <QualityStat label="Last update" value={lastUpdateLabel} />
+        </div>
+      </div>
+      <EnergyFlow assessment={assessment} />
+    </section>
+  );
+}
+
+function AssessmentBrief({ data, assessment }: { data: DashboardSnapshot; assessment: Assessment }) {
+  return (
+    <section className="assessment-brief">
+      <div className="brief-copy">
+        <span className="section-label">Johan brief</span>
+        <h2>{assessment.recommendationLabel}</h2>
+        <p>
+          A first-pass solution envelope points to {fmt(assessment.recommendedSolarKwp)} kWp solar,
+          {fmt(assessment.recommendedInverterKw)} kW inverter capacity, and {fmt(assessment.recommendedBatteryKwh)} kWh usable storage.
+        </p>
+      </div>
+      <FitScore label="Sizing confidence" value={assessment.confidencePct} />
+      <FitScore label="Solar offset fit" value={assessment.solarOffsetPct} />
+      <FitScore label="Power quality" value={assessment.qualityScorePct} />
+      <div className="brief-microcopy">
+        <strong>{data.series.length} live samples</strong>
+        <span>More certainty as the 30-day capture fills.</span>
+      </div>
+    </section>
+  );
+}
+
+function EnergyFlow({ assessment }: { assessment: Assessment }) {
+  return (
+    <div className="energy-flow" aria-label="Live assessment flow">
+      <div className="flow-node source">
+        <span>Acuvim</span>
+        <strong>{fmt(assessment.averageKw)} kW</strong>
+      </div>
+      <div className="flow-line">
+        <span />
+      </div>
+      <div className="flow-node analysis">
+        <span>Profile</span>
+        <strong>{fmt(assessment.loadFactorPct, 0)}%</strong>
+      </div>
+      <div className="flow-line">
+        <span />
+      </div>
+      <div className="flow-node solution">
+        <span>Solution</span>
+        <strong>{fmt(assessment.recommendedSolarKwp)} kWp</strong>
+      </div>
+    </div>
+  );
+}
+
+function FitScore({ label, value }: { label: string; value: number }) {
+  const pct = Math.max(0, Math.min(100, value));
+  return (
+    <div className="fit-score">
+      <div className="fit-ring" style={{ "--score": `${pct * 3.6}deg` } as React.CSSProperties}>
+        <strong>{fmt(pct, 0)}</strong>
+        <span>%</span>
+      </div>
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function buildAssessment(data: DashboardSnapshot): Assessment {
   const values = data.series.map((point) => point.kw).filter(Number.isFinite);
   const averageKw = avg(values, data.metrics.activePowerKw);
@@ -480,11 +617,29 @@ function buildAssessment(data: DashboardSnapshot): Assessment {
   const loadFactorPct = (averageKw / peakKw) * 100;
   const estimatedDailyKwh = estimateDailyKwh(data.series, averageKw);
   const highUseHours = Math.round(values.filter((value) => value >= peakKw * 0.8).length * sampleHours(data.series));
+  const daytime = data.series.filter((point) => {
+    const hour = pointHour(point);
+    return hour >= 8 && hour <= 16;
+  }).map((point) => point.kw);
+  const overnight = data.series.filter((point) => {
+    const hour = pointHour(point);
+    return hour <= 5 || hour >= 22;
+  }).map((point) => point.kw);
   const evening = data.series.filter((point) => {
     const hour = pointHour(point);
     return hour >= 17 && hour <= 21;
   }).map((point) => point.kw);
   const eveningAverageKw = avg(evening, averageKw);
+  const daytimeAverageKw = avg(daytime, averageKw);
+  const overnightAverageKw = avg(overnight, baseLoadKw);
+  const rampKw = maxAdjacentDelta(values);
+  const captureHours = capturedHours(data.series);
+  const confidencePct = Math.min(95, Math.max(12, (captureHours / (24 * 30)) * 100));
+  const qualityPenalty = data.metrics.edgeHeartbeatAgeSec > 90 ? 18 : 0;
+  const errorPenalty = Math.min(20, data.metrics.modbusErrorsPerMin * 8);
+  const qualityScorePct = Math.max(45, 100 - qualityPenalty - errorPenalty - data.metrics.voltageUnbalancePct * 3);
+  const solarOffsetPct = Math.max(10, Math.min(92, (daytimeAverageKw / Math.max(peakKw, 1)) * 100));
+  const peakShaveKw = Math.max(0, peakKw - averageKw);
 
   return {
     averageKw,
@@ -496,7 +651,18 @@ function buildAssessment(data: DashboardSnapshot): Assessment {
     eveningAverageKw,
     recommendedSolarKwp: Math.max(10, estimatedDailyKwh / 4.8),
     recommendedInverterKw: peakKw * 1.15,
-    recommendedBatteryKwh: Math.max(eveningAverageKw * 3, estimatedDailyKwh * 0.25)
+    recommendedBatteryKwh: Math.max(eveningAverageKw * 3, estimatedDailyKwh * 0.25),
+    daytimeAverageKw,
+    overnightAverageKw,
+    rampKw,
+    peakShaveKw,
+    captureHours,
+    confidencePct,
+    qualityScorePct,
+    solarOffsetPct,
+    recommendationLabel: peakShaveKw > averageKw * 0.35
+      ? "Strong solar plus peak-shaving candidate"
+      : "Stable baseload offset candidate"
   };
 }
 
@@ -525,6 +691,24 @@ function estimateDailyKwh(series: ReadingPoint[], averageKw: number): number {
 function sampleHours(series: ReadingPoint[]): number {
   if (series.length < 2 || !series[0].iso || !series[1].iso) return 1;
   return Math.max((Date.parse(series[1].iso) - Date.parse(series[0].iso)) / 3_600_000, 0.01);
+}
+
+function capturedHours(series: ReadingPoint[]): number {
+  if (series.length < 2 || !series[0].iso || !series[series.length - 1].iso) {
+    return Math.max(series.length - 1, 1) * sampleHours(series);
+  }
+  const first = Date.parse(series[0].iso);
+  const last = Date.parse(series[series.length - 1].iso!);
+  return Math.max((last - first) / 3_600_000, sampleHours(series));
+}
+
+function maxAdjacentDelta(values: number[]): number {
+  if (values.length < 2) return 0;
+  let max = 0;
+  for (let i = 1; i < values.length; i += 1) {
+    max = Math.max(max, Math.abs(values[i] - values[i - 1]));
+  }
+  return max;
 }
 
 function pointHour(point: ReadingPoint): number {
