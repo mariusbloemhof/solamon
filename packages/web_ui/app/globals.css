@@ -1025,15 +1025,43 @@ p.subtext {
   display: block;
   width: 100%;
   max-width: 100%;
-  min-height: 300px;
+  min-height: 340px;
   margin-top: 12px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   background:
-    linear-gradient(var(--grid-bg) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-bg) 1px, transparent 1px),
+    radial-gradient(circle at 12% 10%, color-mix(in oklch, var(--info-soft) 55%, transparent), transparent 28%),
+    linear-gradient(180deg, color-mix(in oklch, var(--surface) 82%, var(--bg)), var(--surface)),
     var(--surface);
-  background-size: 100% 65px, 90px 100%;
+  box-shadow: inset 0 1px 0 color-mix(in oklch, white 70%, transparent);
+}
+
+.chart-plot {
+  fill: color-mix(in oklch, var(--bg) 64%, var(--surface));
+  stroke: var(--border);
+}
+
+.chart-grid-line {
+  stroke: color-mix(in oklch, var(--border) 82%, transparent);
+  stroke-width: 1;
+}
+
+.chart-axis-label,
+.chart-axis-unit,
+.chart-x-label {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.chart-axis-unit {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.chart-x-label {
+  font-size: 11px;
 }
 
 .chart-threshold {
@@ -1047,6 +1075,72 @@ p.subtext {
 
 .chart-threshold.average {
   stroke: oklch(58% 0.16 145);
+}
+
+.chart-threshold-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.chart-threshold-label.peak {
+  fill: oklch(45% 0.12 80);
+}
+
+.chart-threshold-label.average {
+  fill: oklch(42% 0.13 145);
+}
+
+.chart-line {
+  fill: none;
+  stroke: url(#loadStrokeGradient);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.chart-line.glow {
+  filter: url(#loadGlow);
+  opacity: 0.22;
+  stroke-width: 10;
+}
+
+.chart-point circle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.chart-point.peak circle {
+  stroke: var(--warn);
+}
+
+.chart-point.latest circle {
+  fill: var(--accent);
+  stroke: var(--surface);
+  filter: drop-shadow(0 0 6px color-mix(in oklch, var(--accent) 54%, transparent));
+}
+
+.chart-callout line {
+  stroke: color-mix(in oklch, var(--border-strong) 80%, transparent);
+  stroke-dasharray: 4 5;
+}
+
+.chart-callout text {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.peak-callout text {
+  fill: oklch(45% 0.12 80);
+}
+
+.latest-callout text {
+  fill: oklch(42% 0.13 145);
 }
 
 .sizing-list,
@@ -1111,9 +1205,15 @@ p.subtext {
 .spark {
   display: block;
   width: 100%;
-  height: 52px;
+  height: 64px;
   margin-top: 10px;
   border-top: 1px solid var(--border);
+}
+
+.spark-dot {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 3;
 }
 
 @keyframes flowPulse {
