@@ -1,6 +1,7 @@
 export type ReadingPoint = {
   t: string;
   kw: number;
+  iso?: string;
 };
 
 export type DeviceOption = {
@@ -85,16 +86,18 @@ export const fixture: DashboardSnapshot = {
     haltedBlocks: []
   },
   series: [
-    { t: "08:00", kw: 118 },
-    { t: "09:00", kw: 156 },
-    { t: "10:00", kw: 211 },
-    { t: "11:00", kw: 247 },
-    { t: "12:00", kw: 262 },
-    { t: "13:00", kw: 301 },
+    { t: "00:00", kw: 78 },
+    { t: "02:00", kw: 71 },
+    { t: "04:00", kw: 76 },
+    { t: "06:00", kw: 112 },
+    { t: "08:00", kw: 188 },
+    { t: "10:00", kw: 244 },
+    { t: "12:00", kw: 286 },
     { t: "14:00", kw: 318 },
-    { t: "15:00", kw: 286 },
-    { t: "16:00", kw: 244 },
-    { t: "17:00", kw: 181 }
+    { t: "16:00", kw: 274 },
+    { t: "18:00", kw: 236 },
+    { t: "20:00", kw: 164 },
+    { t: "22:00", kw: 104 }
   ]
 };
 

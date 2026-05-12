@@ -1,5 +1,4 @@
 import type { DashboardSnapshot, DeviceOption, ReadingPoint } from "@/lib/fixtures";
-import { fixture } from "@/lib/fixtures";
 
 const API_BASE_KEY = "solamon-api-base";
 export const TOKEN_KEY = "solamon-access-token";
@@ -107,11 +106,6 @@ export async function loginToCloud(email: string, password: string): Promise<Log
   return body;
 }
 
-export function useDemoAuth(email: string): void {
-  window.localStorage.setItem("solamon-demo-auth", "true");
-  window.localStorage.setItem(USER_KEY, JSON.stringify({ email, display_name: email, role: "demo", tier: "operations" }));
-}
-
 export async function loadDashboardSnapshot(slug: string, preferredDeviceId?: string): Promise<DashboardSnapshot> {
   const token = authToken();
   if (!token) {
@@ -125,7 +119,7 @@ export async function loadDashboardSnapshot(slug: string, preferredDeviceId?: st
 
   const [snapshot, series] = await Promise.all([
     apiFetch<DeviceSnapshot>(`/sites/${slug}/devices/${device.id}/snapshot`, token),
-    loadPowerSeries(slug, device.id, token)
+    loadPowerSeries(slug, device.id, token, 24)
   ]);
 
   return mapCloudSnapshot(site, device, snapshot, series);
@@ -145,9 +139,14 @@ function chooseDevice(devices: DeviceSummary[], preferredDeviceId?: string): Dev
   return [...devices].sort((a, b) => timestamp(b.last_seen_at) - timestamp(a.last_seen_at))[0];
 }
 
-async function loadPowerSeries(slug: string, deviceId: string, token: string): Promise<ReadingPoint[]> {
+async function loadPowerSeries(
+  slug: string,
+  deviceId: string,
+  token: string,
+  hoursBack: number
+): Promise<ReadingPoint[]> {
   const to = new Date();
-  const from = new Date(to.getTime() - 12 * 60 * 60 * 1000);
+  const from = new Date(to.getTime() - hoursBack * 60 * 60 * 1000);
   const query = new URLSearchParams({
     metric: "active_power_total",
     from: from.toISOString(),
@@ -158,7 +157,8 @@ async function loadPowerSeries(slug: string, deviceId: string, token: string): P
   if (response.points.length === 0) return [];
   return response.points.map((point) => ({
     t: new Date(point.time).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }),
-    kw: point.value ?? 0
+    kw: point.value ?? 0,
+    iso: point.time
   }));
 }
 
@@ -197,7 +197,7 @@ function mapCloudSnapshot(
       demandKw: num(m.active_power_demand, num(m.active_power_total, 0)),
       demandPeakKw: num(m.active_power_demand_max, 0),
       demandPeakAt: timeLabel(m.active_power_demand_max_timestamp),
-      demandWindowMinutes: num(m.demand_window_minutes, fixture.metrics.demandWindowMinutes),
+      demandWindowMinutes: num(m.demand_window_minutes, 15),
       frequencyHz: num(m.frequency_hz, 0),
       voltageUnbalancePct: num(m.voltage_unbalance_pct, 0),
       currentUnbalancePct: num(m.current_unbalance_pct, 0),

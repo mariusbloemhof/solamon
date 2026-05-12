@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { apiBase, loginToCloud, setApiBase, useDemoAuth } from "@/lib/api";
+import { apiBase, loginToCloud, setApiBase } from "@/lib/api";
 
 export function LoginClient() {
   const router = useRouter();
@@ -31,23 +31,34 @@ export function LoginClient() {
     }
   }
 
-  function continueWithFixtures() {
-    useDemoAuth("demo@bench.local");
-    router.push(params.get("callbackUrl") ?? "/sites/bench");
-  }
-
   return (
-    <form onSubmit={submit}>
-      <h2 style={{ marginTop: 0 }}>Sign in</h2>
-      <p className="subtext">Use a cloud account for live sites, or continue with fixtures for offline demos.</p>
-      <div className="grid" style={{ gap: 12, marginTop: 20 }}>
+    <form className="login-form" onSubmit={submit}>
+      <div>
+        <div className="eyebrow">Operator Access</div>
+        <h2>Sign in</h2>
+        <p className="subtext">Use a cloud account with access to registered live devices.</p>
+      </div>
+      <div className="login-actions-row">
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => {
+            const form = document.querySelector<HTMLFormElement>(".login-form");
+            setField(form, "email", "admin@cloud.amendi.dev");
+            setField(form, "apiBase", "/api/v1");
+          }}
+        >
+          Cloud
+        </button>
+      </div>
+      <div className="grid login-fields">
         <label>
           <span className="subtext">Email</span>
-          <input className="input" name="email" type="email" autoComplete="username" defaultValue="admin@bench.local" />
+          <input className="input" name="email" type="email" autoComplete="username" defaultValue="admin@cloud.amendi.dev" />
         </label>
         <label>
           <span className="subtext">Password</span>
-          <input className="input" name="password" type="password" autoComplete="current-password" defaultValue="hunter2" />
+          <input className="input" name="password" type="password" autoComplete="current-password" placeholder="Cloud admin password" />
         </label>
         <label>
           <span className="subtext">Cloud API base</span>
@@ -58,10 +69,14 @@ export function LoginClient() {
         <button className="button" disabled={busy} type="submit">
           {busy ? "Signing in..." : "Sign in to cloud"}
         </button>
-        <button className="button secondary" disabled={busy} type="button" onClick={continueWithFixtures}>
-          Continue with fixtures
-        </button>
       </div>
     </form>
   );
+}
+
+function setField(form: HTMLFormElement | null, name: string, value: string): void {
+  const field = form?.elements.namedItem(name);
+  if (field instanceof HTMLInputElement) {
+    field.value = value;
+  }
 }

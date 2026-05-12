@@ -4,26 +4,37 @@ import { LoginClient } from "./LoginClient";
 export default function LoginPage() {
   return (
     <main className="login-page">
-      <section className="login-visual">
+      <header className="login-topbar">
         <div className="brand">
           <strong>Solamon</strong>
-          <span>Solar Monitor POC</span>
+          <span>v0.4</span>
         </div>
-        <div>
-          <h1 style={{ fontSize: 46, margin: 0, letterSpacing: 0 }}>Live load assessment for solar sites</h1>
-          <p style={{ maxWidth: 620, lineHeight: 1.6, color: "#dbeafe" }}>
-            Revenue-grade Acuvim data, edge health, demand control, and audit-ready command state in one operator console.
-          </p>
+        <span className="subtext">Solar Monitor POC</span>
+      </header>
+      <section className="login-wrap">
+        <div className="login-visual">
+          <div>
+            <div className="eyebrow">Field Assessment Console</div>
+            <h1>Live load assessment for solar sites</h1>
+            <p>
+              Sign in to inspect registered devices and live Acuvim telemetry from field sites.
+            </p>
+          </div>
+          <div className="login-badges">
+            <span className="pill ok"><span className="dot" /> Cloud telemetry online</span>
+            <span className="pill muted">Bench site</span>
+          </div>
+          <div className="login-facts">
+            <div><strong>Source</strong><span>Acuvim L MQTT</span></div>
+            <div><strong>Window</strong><span>30 day capture</span></div>
+            <div><strong>Purpose</strong><span>Client sizing</span></div>
+          </div>
         </div>
-        <div className="inline-row">
-          <span className="pill ok"><span className="dot" /> Fixture cloud online</span>
-          <span className="pill warn">POC rehearsal</span>
-        </div>
-      </section>
-      <section className="login-card">
-        <Suspense fallback={<div className="card">Loading sign in...</div>}>
-          <LoginClient />
-        </Suspense>
+        <section className="login-card">
+          <Suspense fallback={<div className="card">Loading sign in...</div>}>
+            <LoginClient />
+          </Suspense>
+        </section>
       </section>
     </main>
   );

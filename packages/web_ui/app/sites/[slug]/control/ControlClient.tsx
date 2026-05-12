@@ -4,13 +4,13 @@ import { CheckCircle2, Clock, Radio, RotateCcw, Send, SlidersHorizontal } from "
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { authToken, currentUserLabel } from "@/lib/api";
-import { fixture } from "@/lib/fixtures";
 import { nowTime } from "@/lib/format";
 
 type Step = "issued" | "sent" | "edge" | "confirmed";
+const DEFAULT_DEMAND_WINDOW_MINUTES = 15;
 
 export default function ControlClient() {
-  const [windowMinutes, setWindowMinutes] = useState(String(fixture.metrics.demandWindowMinutes));
+  const [windowMinutes, setWindowMinutes] = useState(String(DEFAULT_DEMAND_WINDOW_MINUTES));
   const [active, setActive] = useState<Step | "idle">("idle");
   const hasCloudSession = typeof window !== "undefined" && Boolean(authToken());
   const userLabel = typeof window !== "undefined" ? currentUserLabel() : "operator";
@@ -60,7 +60,7 @@ export default function ControlClient() {
   }
 
   return (
-    <AppShell active="control" dataMode={hasCloudSession ? "cloud" : "fixtures"} userLabel={userLabel}>
+    <AppShell active="control" dataMode={hasCloudSession ? "cloud" : "offline"} userLabel={userLabel}>
       <div className="page-heading">
         <div>
           <h1>Demand window control</h1>
