@@ -14,6 +14,7 @@ from ..models.pydantic import DeviceSnapshot, ReadingPoint, ReadingSeries
 router = APIRouter(prefix="/sites/{slug}/devices/{device_id}", tags=["telemetry"])
 
 MAX_RAW_WINDOW = timedelta(days=30)
+MAX_RAW_POINTS = 20_000
 
 
 async def _check_access(pool: asyncpg.Pool, user_id: UUID, slug: str, device_id: UUID) -> None:
@@ -61,11 +62,15 @@ async def get_readings(
         raise HTTPException(422, "raw window must be ≤ 30 days; use aggregate=1hour for longer ranges")
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """SELECT time, value, quality FROM timeseries.reading
-               WHERE device_id = $1 AND logical_metric_key = $2
-                 AND time >= $3 AND time <= $4
-               ORDER BY time ASC LIMIT 5000""",
-            device_id, metric, frm, to,
+            """SELECT time, value, quality
+                 FROM (
+                   SELECT time, value, quality FROM timeseries.reading
+                    WHERE device_id = $1 AND logical_metric_key = $2
+                      AND time >= $3 AND time <= $4
+                    ORDER BY time DESC LIMIT $5
+                 ) latest
+                ORDER BY time ASC""",
+            device_id, metric, frm, to, MAX_RAW_POINTS,
         )
     points = [ReadingPoint(time=r["time"], value=r["value"], quality=r["quality"]) for r in rows]
     return ReadingSeries(metric=metric, aggregate=aggregate, points=points)
