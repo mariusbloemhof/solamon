@@ -492,6 +492,20 @@ th {
   box-shadow: none;
 }
 
+.chart-card {
+  padding: 18px;
+}
+
+.chart-card .card-title {
+  min-height: 34px;
+  font-size: 15px;
+}
+
+.chart-card .pill {
+  min-height: 30px;
+  padding-inline: 10px;
+}
+
 .empty-state {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1025,7 +1039,7 @@ p.subtext {
   display: block;
   width: 100%;
   max-width: 100%;
-  min-height: 340px;
+  min-height: 430px;
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1034,6 +1048,8 @@ p.subtext {
     linear-gradient(180deg, color-mix(in oklch, var(--surface) 82%, var(--bg)), var(--surface)),
     var(--surface);
   box-shadow: inset 0 1px 0 color-mix(in oklch, white 70%, transparent);
+  cursor: crosshair;
+  touch-action: none;
 }
 
 .chart-plot {
@@ -1062,6 +1078,15 @@ p.subtext {
 
 .chart-x-label {
   font-size: 11px;
+}
+
+.chart-header text {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .chart-threshold {
@@ -1141,6 +1166,44 @@ p.subtext {
 
 .latest-callout text {
   fill: oklch(42% 0.13 145);
+}
+
+.chart-crosshair {
+  pointer-events: none;
+}
+
+.chart-crosshair line {
+  stroke: color-mix(in oklch, var(--fg) 42%, transparent);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 5;
+}
+
+.chart-crosshair circle {
+  fill: var(--surface);
+  stroke: var(--fg);
+  stroke-width: 3;
+  filter: drop-shadow(0 2px 8px color-mix(in oklch, var(--fg) 18%, transparent));
+}
+
+.chart-tooltip rect {
+  fill: color-mix(in oklch, var(--fg) 94%, black);
+  stroke: color-mix(in oklch, white 20%, transparent);
+}
+
+.chart-tooltip text {
+  fill: var(--surface);
+  font-family: var(--font-mono);
+  font-weight: 650;
+}
+
+.chart-tooltip text:first-of-type {
+  fill: color-mix(in oklch, var(--surface) 78%, var(--faint));
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+.chart-tooltip text:last-of-type {
+  font-size: 17px;
 }
 
 .sizing-list,

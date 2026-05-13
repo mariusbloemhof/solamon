@@ -219,7 +219,7 @@ export default function DashboardClient({
         </div>
 
         <div className="grid dashboard-grid">
-          <div className="card span-8">
+          <div className="card chart-card span-12">
             <div className="card-title">
               <span>Load profile</span>
               <span className="pill muted">24h live trace</span>
@@ -359,7 +359,7 @@ export default function DashboardClient({
       </div>
 
       <div className="grid dashboard-grid">
-        <div className="card span-8">
+        <div className="card chart-card span-12">
           <div className="card-title">
             <span>Consumption profile</span>
             <span className="pill muted">{windowLabel.toLowerCase()} load trace</span>

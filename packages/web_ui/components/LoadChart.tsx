@@ -1,3 +1,6 @@
+"use client";
+
+import { useMemo, useState, type MouseEvent } from "react";
 import type { ReadingPoint } from "@/lib/fixtures";
 
 type ChartPoint = {
@@ -5,6 +8,7 @@ type ChartPoint = {
   y: number;
   label: string;
   kw: number;
+  iso?: string;
 };
 
 export function LoadChart({
@@ -16,12 +20,13 @@ export function LoadChart({
   averageKw?: number;
   peakKw?: number;
 }) {
+  const [hoverX, setHoverX] = useState<number | null>(null);
   const width = 900;
-  const height = 300;
+  const height = 350;
   const padLeft = 54;
   const padRight = 26;
-  const padTop = 28;
-  const padBottom = 42;
+  const padTop = 42;
+  const padBottom = 48;
   const safeData = data.length > 0 ? data : [{ t: "now", kw: 0 }];
   const values = safeData.map((d) => d.kw);
   const min = Math.min(0, Math.min(...values) * 0.9);
@@ -29,11 +34,11 @@ export function LoadChart({
   const range = Math.max(max - min, 1);
   const chartWidth = width - padLeft - padRight;
   const chartHeight = height - padTop - padBottom;
-  const pointList = safeData.map((d, i) => {
+  const pointList = useMemo(() => safeData.map((d, i) => {
     const x = padLeft + (i / Math.max(safeData.length - 1, 1)) * chartWidth;
     const y = padTop + (1 - (d.kw - min) / range) * chartHeight;
-    return { x, y, label: d.t, kw: d.kw };
-  });
+    return { x, y, label: d.t, kw: d.kw, iso: d.iso };
+  }), [safeData, chartWidth, chartHeight, max, min, range]);
   const linePath = smoothPath(pointList);
   const baselineY = height - padBottom;
   const areaPath = `${linePath} L ${pointList.at(-1)?.x ?? padLeft} ${baselineY} L ${padLeft} ${baselineY} Z`;
@@ -42,6 +47,10 @@ export function LoadChart({
   const peakY = typeof peakKw === "number" ? yFor(peakKw) : null;
   const peakPoint = pointList.reduce((best, point) => (point.kw > best.kw ? point : best), pointList[0]);
   const lastPoint = pointList[pointList.length - 1];
+  const activePoint = nearestPoint(pointList, hoverX) ?? lastPoint;
+  const tooltipWidth = 142;
+  const tooltipX = Math.min(width - padRight - tooltipWidth, Math.max(padLeft + 6, activePoint.x + 12));
+  const tooltipY = Math.min(baselineY - 76, Math.max(padTop + 8, activePoint.y - 68));
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
     const kw = min + (1 - ratio) * range;
     return {
@@ -54,8 +63,22 @@ export function LoadChart({
     return i % Math.ceil(safeData.length / 6) === 0 || i === safeData.length - 1;
   });
 
+  function onPointerMove(event: MouseEvent<SVGSVGElement>) {
+    const svg = event.currentTarget;
+    const bounds = svg.getBoundingClientRect();
+    const x = ((event.clientX - bounds.left) / bounds.width) * width;
+    setHoverX(Math.max(padLeft, Math.min(width - padRight, x)));
+  }
+
   return (
-    <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Load profile chart">
+    <svg
+      className="chart"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="Load profile chart"
+      onMouseMove={onPointerMove}
+      onMouseLeave={() => setHoverX(null)}
+    >
       <defs>
         <linearGradient id="loadAreaGradient" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stopColor="oklch(79% 0.15 145)" stopOpacity="0.55" />
@@ -83,10 +106,16 @@ export function LoadChart({
         </g>
       ))}
       <text className="chart-axis-unit" x={padLeft - 10} y={18} textAnchor="end">kW</text>
+      <g className="chart-header">
+        <text x={padLeft} y="20">Active power trace</text>
+        <text x={width - padRight} y="20" textAnchor="end">
+          {safeData.length.toLocaleString("en-ZA")} samples
+        </text>
+      </g>
       {peakY !== null ? (
         <>
           <line className="chart-threshold peak" x1={padLeft} x2={width - padRight} y1={peakY} y2={peakY} />
-          <text className="chart-threshold-label peak" x={width - padRight - 8} y={Math.max(18, peakY - 8)} textAnchor="end">peak {Math.round(peakKw!)} kW</text>
+          <text className="chart-threshold-label peak" x={width - padRight - 8} y={Math.max(padTop + 12, peakY - 9)} textAnchor="end">peak {Math.round(peakKw!)} kW</text>
         </>
       ) : null}
       {averageY !== null ? (
@@ -110,10 +139,10 @@ export function LoadChart({
           </g>
         );
       })}
-      {peakPoint ? (
+      {peakPoint && peakPoint !== lastPoint ? (
         <g className="chart-callout peak-callout">
           <line x1={peakPoint.x} x2={peakPoint.x} y1={peakPoint.y + 8} y2={baselineY} />
-          <text x={Math.min(width - 116, Math.max(padLeft + 18, peakPoint.x + 10))} y={Math.max(padTop + 18, peakPoint.y - 14)}>
+          <text x={Math.min(width - 148, Math.max(padLeft + 18, peakPoint.x + 10))} y={Math.max(padTop + 20, peakPoint.y - 14)}>
             measured peak
           </text>
         </g>
@@ -125,6 +154,18 @@ export function LoadChart({
           </text>
         </g>
       ) : null}
+      {activePoint ? (
+        <g className="chart-crosshair">
+          <line x1={activePoint.x} x2={activePoint.x} y1={padTop} y2={baselineY} />
+          <line x1={padLeft} x2={width - padRight} y1={activePoint.y} y2={activePoint.y} />
+          <circle cx={activePoint.x} cy={activePoint.y} r="6" />
+          <g className="chart-tooltip" transform={`translate(${tooltipX} ${tooltipY})`}>
+            <rect width={tooltipWidth} height="56" rx="6" />
+            <text x="10" y="20">{activePoint.label}</text>
+            <text x="10" y="42">{formatKw(activePoint.kw)} kW</text>
+          </g>
+        </g>
+      ) : null}
       {xLabels.map((point, i) => (
         <text className="chart-x-label" key={`${point.label}-${i}`} x={point.x} y={height - 12} textAnchor="middle">
           {point.label}
@@ -132,6 +173,20 @@ export function LoadChart({
       ))}
     </svg>
   );
+}
+
+function nearestPoint(points: ChartPoint[], x: number | null): ChartPoint | null {
+  if (x === null || points.length === 0) return null;
+  return points.reduce((best, point) => (
+    Math.abs(point.x - x) < Math.abs(best.x - x) ? point : best
+  ), points[0]);
+}
+
+function formatKw(value: number): string {
+  return value.toLocaleString("en-ZA", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  });
 }
 
 function smoothPath(points: ChartPoint[]): string {
