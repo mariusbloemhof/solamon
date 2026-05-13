@@ -30,6 +30,7 @@ type Assessment = {
   baseLoadKw: number;
   loadFactorPct: number;
   estimatedDailyKwh: number;
+  energyTodayKwh: number;
   highUseHours: number;
   eveningAverageKw: number;
   recommendedSolarKwp: number;
@@ -53,7 +54,6 @@ export default function DashboardClient({
   slug?: string;
   variant?: "dashboard" | "assessment";
 }) {
-  const [, setTick] = useState(0);
   const [cloudData, setCloudData] = useState<DashboardSnapshot | null>(null);
   const [cloudError, setCloudError] = useState("");
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
@@ -65,15 +65,6 @@ export default function DashboardClient({
   const dataMode = cloudData ? "cloud" : "offline";
   const deviceOptions = data?.site.devices ?? [];
   const activeDevice = data ? deviceOptions.find((device) => device.id === data.site.deviceId) : undefined;
-
-  useEffect(() => {
-    setLastUpdateLabel(nowTime());
-    const id = window.setInterval(() => {
-      setTick((n) => n + 1);
-      setLastUpdateLabel(nowTime());
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, []);
 
   useEffect(() => {
     setSelectedDeviceId(window.localStorage.getItem(deviceSelectionKey(slug)) ?? "");
@@ -89,6 +80,7 @@ export default function DashboardClient({
         if (!cancelled) {
           setCloudData(snapshot);
           setCloudError("");
+          setLastUpdateLabel(nowTime());
           if (!selectedDeviceId) {
             window.localStorage.setItem(deviceSelectionKey(slug), snapshot.site.deviceId);
             setSelectedDeviceId(snapshot.site.deviceId);
@@ -102,7 +94,7 @@ export default function DashboardClient({
     }
 
     refresh();
-    const id = window.setInterval(refresh, 10_000);
+    const id = window.setInterval(refresh, 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -137,6 +129,15 @@ export default function DashboardClient({
   }
 
   if (variant === "dashboard") {
+    const demandPeakKw = data.metrics.demandPeakKw > 0 ? data.metrics.demandPeakKw : assessment.peakKw;
+    const demandPeakDetail = data.metrics.demandPeakKw > 0
+      ? `at ${data.metrics.demandPeakAt}`
+      : "from live trace";
+    const energyTodayKwh = data.metrics.importKwhToday > 0 ? data.metrics.importKwhToday : assessment.energyTodayKwh;
+    const energyTodayDetail = data.metrics.importKwhToday > 0
+      ? `${fmt(data.metrics.exportKwhToday)} kWh export`
+      : "estimated from live trace";
+
     return (
       <AppShell active="dashboard" dataMode={dataMode} userLabel={userLabel}>
         <div className="page-heading">
@@ -180,17 +181,17 @@ export default function DashboardClient({
           />
           <GaugeTile
             label="Demand peak"
-            value={data.metrics.demandPeakKw}
+            value={demandPeakKw}
             unit="kW"
             max={Math.max(assessment.peakKw * 1.2, 1)}
-            detail={`at ${data.metrics.demandPeakAt}`}
+            detail={demandPeakDetail}
           />
           <GaugeTile
             label="Energy today"
-            value={data.metrics.importKwhToday}
+            value={energyTodayKwh}
             unit="kWh"
             max={Math.max(assessment.estimatedDailyKwh * 1.25, 1)}
-            detail={`${fmt(data.metrics.exportKwhToday)} kWh export`}
+            detail={energyTodayDetail}
           />
           <GaugeTile
             label="Frequency"
@@ -334,10 +335,10 @@ export default function DashboardClient({
         />
         <GaugeTile
           label="Energy today"
-          value={data.metrics.importKwhToday}
+          value={data.metrics.importKwhToday > 0 ? data.metrics.importKwhToday : assessment.energyTodayKwh}
           unit="kWh"
           max={Math.max(assessment.estimatedDailyKwh * 1.25, 1)}
-          detail={`${fmt(data.metrics.exportKwhToday)} kWh export`}
+          detail={data.metrics.importKwhToday > 0 ? `${fmt(data.metrics.exportKwhToday)} kWh export` : "estimated from live trace"}
         />
         <GaugeTile
           label="Power quality"
@@ -405,7 +406,7 @@ export default function DashboardClient({
           icon={<Gauge size={18} />}
           value={fmt(data.metrics.demandKw)}
           unit="kW"
-          detail={`Peak ${fmt(data.metrics.demandPeakKw)} kW at ${data.metrics.demandPeakAt}`}
+          detail={`Peak ${fmt(data.metrics.demandPeakKw > 0 ? data.metrics.demandPeakKw : assessment.peakKw)} kW ${data.metrics.demandPeakKw > 0 ? `at ${data.metrics.demandPeakAt}` : "from live trace"}`}
         />
         <MetricCard
           className="span-3"
@@ -542,7 +543,7 @@ function ExecutiveSummary({
           <QualityStat label="Last update" value={lastUpdateLabel} />
         </div>
       </div>
-      <EnergyFlow assessment={assessment} />
+      <EnergyFlow assessment={assessment} currentKw={data.metrics.activePowerKw} />
     </section>
   );
 }
@@ -569,12 +570,12 @@ function AssessmentBrief({ data, assessment }: { data: DashboardSnapshot; assess
   );
 }
 
-function EnergyFlow({ assessment }: { assessment: Assessment }) {
+function EnergyFlow({ assessment, currentKw }: { assessment: Assessment; currentKw: number }) {
   return (
     <div className="energy-flow" aria-label="Live assessment flow">
       <div className="flow-node source">
         <span>Acuvim</span>
-        <strong>{fmt(assessment.averageKw)} kW</strong>
+        <strong>{fmt(currentKw)} kW</strong>
       </div>
       <div className="flow-line">
         <span />
@@ -616,6 +617,7 @@ function buildAssessment(data: DashboardSnapshot): Assessment {
   const baseLoadKw = avg(lowSlice, Math.min(data.metrics.activePowerKw, peakKw));
   const loadFactorPct = (averageKw / peakKw) * 100;
   const estimatedDailyKwh = estimateDailyKwh(data.series, averageKw);
+  const energyTodayKwh = estimateTodayKwh(data.series);
   const highUseHours = Math.round(values.filter((value) => value >= peakKw * 0.8).length * sampleHours(data.series));
   const daytime = data.series.filter((point) => {
     const hour = pointHour(point);
@@ -647,6 +649,7 @@ function buildAssessment(data: DashboardSnapshot): Assessment {
     baseLoadKw,
     loadFactorPct,
     estimatedDailyKwh,
+    energyTodayKwh,
     highUseHours,
     eveningAverageKw,
     recommendedSolarKwp: Math.max(10, estimatedDailyKwh / 4.8),
@@ -686,6 +689,31 @@ function estimateDailyKwh(series: ReadingPoint[], averageKw: number): number {
   const last = Date.parse(series[series.length - 1].iso!);
   const capturedHours = Math.max((last - first) / 3_600_000, 1);
   return (kwh / capturedHours) * 24;
+}
+
+function estimateTodayKwh(series: ReadingPoint[]): number {
+  const withIso = series.filter((point) => point.iso);
+  if (withIso.length < 2) return 0;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  let kwh = 0;
+
+  for (let i = 1; i < withIso.length; i += 1) {
+    const prev = withIso[i - 1];
+    const next = withIso[i];
+    const prevTime = Date.parse(prev.iso!);
+    const nextTime = Date.parse(next.iso!);
+    if (!Number.isFinite(prevTime) || !Number.isFinite(nextTime) || nextTime <= startOfToday) continue;
+
+    const segmentStart = Math.max(prevTime, startOfToday);
+    const segmentEnd = nextTime;
+    const dtHours = (segmentEnd - segmentStart) / 3_600_000;
+    if (dtHours > 0 && dtHours <= 3) {
+      kwh += ((prev.kw + next.kw) / 2) * dtHours;
+    }
+  }
+
+  return kwh;
 }
 
 function sampleHours(series: ReadingPoint[]): number {

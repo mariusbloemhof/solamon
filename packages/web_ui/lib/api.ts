@@ -180,7 +180,7 @@ function mapCloudSnapshot(
   series: ReadingPoint[]
 ): DashboardSnapshot {
   const m = snapshot.metrics ?? {};
-  const realSeries = series.length > 0 ? series : pointFromSnapshot(m);
+  const realSeries = appendSnapshotPoint(series, pointFromSnapshot(m, snapshot.snapshot_time));
   return {
     site: {
       name: site.name,
@@ -233,9 +233,35 @@ function deviceOption(device: DeviceSummary): DeviceOption {
   };
 }
 
-function pointFromSnapshot(metrics: Record<string, unknown>): ReadingPoint[] {
+function pointFromSnapshot(metrics: Record<string, unknown>, snapshotTime?: string): ReadingPoint {
   const value = num(metrics.active_power_total, 0);
-  return [{ t: "now", kw: value }];
+  const iso = validIso(snapshotTime) ? snapshotTime! : new Date().toISOString();
+  return {
+    t: new Date(iso).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }),
+    kw: value,
+    iso
+  };
+}
+
+function appendSnapshotPoint(series: ReadingPoint[], snapshotPoint: ReadingPoint): ReadingPoint[] {
+  const sorted = [...series]
+    .filter((point) => Number.isFinite(point.kw))
+    .sort((a, b) => timestamp(a.iso) - timestamp(b.iso));
+  if (sorted.length === 0) return [snapshotPoint];
+
+  const last = sorted[sorted.length - 1];
+  const lastTime = timestamp(last.iso);
+  const snapshotTime = timestamp(snapshotPoint.iso);
+  if (!lastTime || !snapshotTime) return [...sorted, snapshotPoint];
+
+  const secondsApart = Math.abs(snapshotTime - lastTime) / 1000;
+  if (secondsApart <= 10) {
+    return [...sorted.slice(0, -1), snapshotPoint];
+  }
+  if (snapshotTime > lastTime) {
+    return [...sorted, snapshotPoint];
+  }
+  return sorted;
 }
 
 function num(value: unknown, fallback: number): number {
@@ -260,4 +286,8 @@ function timestamp(value?: string | null): number {
   if (!value) return 0;
   const time = new Date(value).getTime();
   return Number.isNaN(time) ? 0 : time;
+}
+
+function validIso(value?: string): boolean {
+  return Boolean(value && !Number.isNaN(new Date(value).getTime()));
 }
