@@ -1548,6 +1548,102 @@ p.subtext {
   font-size: 11.5px;
 }
 
+.client-gauge-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.client-gauge-tile {
+  min-width: 0;
+  padding: 22px 14px 20px;
+  border-right: 1px solid var(--border);
+  text-align: center;
+}
+
+.client-gauge-tile:last-child {
+  border-right: 0;
+}
+
+.client-gauge-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.client-gauge-label .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.client-gauge-label .dot.warn {
+  background: var(--warn);
+}
+
+.client-gauge-tile svg {
+  display: block;
+  width: min(128px, 100%);
+  margin: 16px auto 2px;
+}
+
+.client-gauge-track,
+.client-gauge-fill {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 10;
+}
+
+.client-gauge-track {
+  stroke: var(--border);
+}
+
+.client-gauge-fill {
+  stroke: var(--accent);
+}
+
+.client-gauge-fill.warn {
+  stroke: var(--warn);
+}
+
+.client-gauge-value {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+.client-gauge-value strong {
+  font-family: var(--font-mono);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.client-gauge-value span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.client-gauge-detail {
+  margin-top: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .client-chart-frame {
   padding: 18px;
 }
@@ -1708,50 +1804,79 @@ p.subtext {
   background: oklch(99% 0.004 230);
 }
 
-.client-daily-chart {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 12px;
-  height: 220px;
-  margin-top: 12px;
-  padding: 8px 0 0;
+.client-usage-chart {
+  display: block;
+  width: 100%;
+  min-height: 250px;
+  margin-top: 8px;
 }
 
-.client-daily-column {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 8px;
-  min-width: 0;
+.client-usage-area {
+  fill: url(#clientUsageFill);
 }
 
-.client-daily-bars {
+.client-usage-line {
+  fill: none;
+  stroke: oklch(48% 0.16 165);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.client-day-line {
+  stroke: var(--border);
+  stroke-dasharray: 2 8;
+}
+
+.client-day-peak {
+  fill: var(--surface);
+  stroke: var(--warn);
+  stroke-width: 3;
+}
+
+.client-day-peak-label {
+  fill: oklch(42% 0.13 80);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.client-axis-label.muted {
+  opacity: 0.45;
+}
+
+.client-trend-legend {
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 5px;
-  min-height: 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.client-daily-bars i {
-  width: 12px;
-  min-height: 4px;
-  border-radius: 999px 999px 0 0;
-}
-
-.client-daily-bars .energy {
-  background: oklch(64% 0.14 150);
-}
-
-.client-daily-bars .peak {
-  background: oklch(68% 0.15 85);
-}
-
-.client-daily-column span {
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
-  text-align: center;
+}
+
+.client-trend-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.client-trend-legend i {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.client-trend-legend .energy {
+  background: oklch(48% 0.16 165);
+}
+
+.client-trend-legend .peak {
+  height: 8px;
+  width: 8px;
+  border: 2px solid var(--warn);
+  background: var(--surface);
 }
 
 .client-trend-summary {
@@ -1892,17 +2017,19 @@ p.subtext {
   min-height: 100vh;
   place-items: center;
   padding: 24px;
-  background: var(--bg);
+  background:
+    linear-gradient(135deg, oklch(98% 0.012 180), oklch(96% 0.01 230) 52%, oklch(99% 0.006 95));
 }
 
 .client-login-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  width: min(880px, 100%);
+  grid-template-columns: minmax(0, 1fr) 390px;
+  width: min(960px, 100%);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: 0 24px 70px oklch(20% 0.04 245 / 0.12);
 }
 
 .client-login-copy,
@@ -1913,7 +2040,7 @@ p.subtext {
 .client-login-copy {
   display: grid;
   align-content: center;
-  background: var(--bg);
+  background: linear-gradient(135deg, oklch(99% 0.012 160), oklch(96% 0.012 210));
 }
 
 .client-mark {
@@ -1923,7 +2050,8 @@ p.subtext {
 
 .client-login-copy h1 {
   margin: 12px 0 8px;
-  font-size: 32px;
+  max-width: 430px;
+  font-size: 38px;
   line-height: 1.05;
 }
 
@@ -1931,6 +2059,25 @@ p.subtext {
   max-width: 420px;
   margin: 0;
   color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.client-login-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 26px;
+}
+
+.client-login-points span {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: oklch(100% 0 0 / 0.7);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .client-login-form {
@@ -1940,8 +2087,8 @@ p.subtext {
 
 .client-access-card {
   display: grid;
-  gap: 6px;
-  padding: 14px;
+  gap: 8px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
@@ -2052,6 +2199,18 @@ p.subtext {
   .client-insight-grid,
   .client-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-gauge-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .client-gauge-tile:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .client-gauge-tile:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--border);
   }
 
   .client-longterm-grid {
@@ -2170,17 +2329,26 @@ p.subtext {
     grid-template-columns: 1fr;
   }
 
+  .client-gauge-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .client-gauge-tile,
+  .client-gauge-tile:nth-child(3n) {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .client-gauge-tile:last-child {
+    border-bottom: 0;
+  }
+
   .client-load-chart {
     min-height: 280px;
   }
 
-  .client-daily-chart {
-    gap: 7px;
-    height: 180px;
-  }
-
-  .client-daily-bars i {
-    width: 9px;
+  .client-usage-chart {
+    min-height: 220px;
   }
 
   .span-3,
