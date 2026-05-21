@@ -237,13 +237,10 @@ function SevenDayUsageChart({ points, days }: { points: TrendPoint[]; days: Dail
         const textX = anchor === "end" ? px - 8 : px + 8;
         return (
           <text key={`${day.key}-peak-label`} x={textX} y={Math.max(pad.top + 14, py - 8)} textAnchor={anchor} className="client-day-peak-label">
-            Peak {fmt(day.peakKw)} kW
+            {fmt(day.peakKw)} kW
           </text>
         );
       })}
-      <text x={pad.left + plotW - 4} y={pad.top + 14} textAnchor="end" className="client-peak-note">
-        Gold points mark each day's peak load
-      </text>
       <text x={pad.left - 34} y={pad.top - 6} className="client-axis-unit">kW</text>
     </svg>
   );
