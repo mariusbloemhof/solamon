@@ -95,7 +95,7 @@ export function ClientLoadProfileChart({ data }: { data: ReadingPoint[] }) {
           {peakXY && stats.peak ? (
             <g>
               <line x1={peakXY.x} x2={peakXY.x} y1={pad.top} y2={pad.top + plotH} className="client-marker-line" />
-              <circle cx={peakXY.x} cy={peakXY.y} r="8" className="client-peak-dot" />
+              <circle cx={peakXY.x} cy={peakXY.y} r="6" className="client-peak-dot" />
               <text x={Math.min(peakXY.x + 14, pad.left + plotW - 130)} y={Math.max(peakXY.y - 14, pad.top + 18)} className="client-peak-label">
                 Peak {fmt(stats.peak.kw)} kW
               </text>
@@ -103,7 +103,7 @@ export function ClientLoadProfileChart({ data }: { data: ReadingPoint[] }) {
           ) : null}
           {latestXY && stats.latest ? (
             <g>
-              <circle cx={latestXY.x} cy={latestXY.y} r="8" className="client-live-dot" />
+              <circle cx={latestXY.x} cy={latestXY.y} r="6" className="client-live-dot" />
               <text x={Math.max(latestXY.x - 84, pad.left + 8)} y={Math.max(latestXY.y - 14, pad.top + 18)} className="client-live-label">
                 Live now
               </text>

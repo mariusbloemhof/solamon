@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, BatteryCharging, Gauge, Info, ShieldCheck, Zap } from "lucide-react";
+import { Activity, BatteryCharging, Clock3, Gauge, Info, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -13,6 +13,7 @@ import { fmt } from "@/lib/format";
 export function ClientSitePage({ slug }: { slug: string }) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
+  const [longSeries, setLongSeries] = useState<DashboardSnapshot["series"]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
 
@@ -25,9 +26,11 @@ export function ClientSitePage({ slug }: { slug: string }) {
     let cancelled = false;
     async function refresh() {
       try {
-        const next = await loadDashboardSnapshot(slug, undefined, 24);
+        const fullWindow = await loadDashboardSnapshot(slug, undefined, 168);
+        const next = { ...fullWindow, series: recentWindow(fullWindow.series, 24) };
         if (!cancelled) {
           setSnapshot(next);
+          setLongSeries(fullWindow.series);
           setError("");
           setBusy(false);
         }
@@ -76,13 +79,14 @@ export function ClientSitePage({ slug }: { slug: string }) {
 
   return (
     <ClientShell siteName={snapshot.site.name} status={status} lastSeenLabel={lastSeenLabel}>
-      <ClientAssessment snapshot={snapshot} />
+      <ClientAssessment snapshot={snapshot} longSeries={longSeries} />
     </ClientShell>
   );
 }
 
-function ClientAssessment({ snapshot }: { snapshot: DashboardSnapshot }) {
+function ClientAssessment({ snapshot, longSeries }: { snapshot: DashboardSnapshot; longSeries: DashboardSnapshot["series"] }) {
   const stats = useMemo(() => loadStats(snapshot.series), [snapshot.series]);
+  const longStats = useMemo(() => longTermStats(longSeries), [longSeries]);
   const peakTime = stats.peak ? stats.peak.t : "--";
   const energy = estimateEnergyKwh(snapshot.series);
   const pf = snapshot.metrics.powerFactor[3] || snapshot.metrics.powerFactor.find(Boolean) || 0;
@@ -117,6 +121,8 @@ function ClientAssessment({ snapshot }: { snapshot: DashboardSnapshot }) {
 
       <ClientLoadProfileChart data={snapshot.series} />
 
+      <LongTermAnalysis stats={longStats} />
+
       <div className="client-insight-grid">
         <InsightCard title="Load pattern" text={pattern} />
         <InsightCard title="Peak event" text={stats.peak ? `Peak load reached ${fmt(stats.peak.kw)} kW at ${peakTime}.` : "Not enough readings yet to identify a peak event."} />
@@ -139,6 +145,73 @@ function ClientAssessment({ snapshot }: { snapshot: DashboardSnapshot }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function LongTermAnalysis({ stats }: { stats: LongStats }) {
+  return (
+    <div className="client-longterm">
+      <div className="client-longterm-head">
+        <div>
+          <span className="client-kicker">7 day usage intelligence</span>
+          <h2>Operating trend</h2>
+        </div>
+        <span>{stats.days.length ? `${stats.days.length} day view` : "Building history"}</span>
+      </div>
+      <div className="client-longterm-grid">
+        <div className="client-trend-panel">
+          <div className="client-card-title"><span>Daily energy and peak load</span><Activity size={16} /></div>
+          {stats.days.length ? <DailyTrendChart days={stats.days} /> : <div className="client-empty-inline">Waiting for enough readings.</div>}
+        </div>
+        <div className="client-trend-summary">
+          <ClientKpi title="7 day energy" value={fmt(stats.energyKwh, 0)} unit="kWh" icon={<BatteryCharging size={18} />} detail="Estimated from received active power" />
+          <ClientKpi title="Weekly peak" value={stats.peak ? fmt(stats.peak.kw) : "--"} unit="kW" icon={<Gauge size={18} />} detail={stats.peak ? `Seen ${stats.peak.when}` : "Waiting for history"} />
+          <ClientKpi title="Peak usage time" value={stats.peakHourLabel} unit="" icon={<Clock3 size={18} />} detail="Highest average hour of day" />
+          <div className="client-profile-card">
+            <div className="client-card-title"><span>Load profile mix</span><Zap size={16} /></div>
+            <LoadBand label="Light" value={stats.bands.lightPct} />
+            <LoadBand label="Working" value={stats.bands.workingPct} />
+            <LoadBand label="Peak" value={stats.bands.peakPct} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DailyTrendChart({ days }: { days: DailyBucket[] }) {
+  const maxEnergy = Math.max(...days.map((day) => day.energyKwh), 1);
+  const maxPeak = Math.max(...days.map((day) => day.peakKw), 1);
+  return (
+    <div className="client-daily-chart">
+      {days.map((day) => (
+        <div key={day.key} className="client-daily-column">
+          <div className="client-daily-bars">
+            <i
+              className="energy"
+              style={{ height: `${Math.max(4, (day.energyKwh / maxEnergy) * 100)}%` }}
+              title={`${fmt(day.energyKwh, 0)} kWh`}
+            />
+            <i
+              className="peak"
+              style={{ height: `${Math.max(4, (day.peakKw / maxPeak) * 100)}%` }}
+              title={`${fmt(day.peakKw)} kW peak`}
+            />
+          </div>
+          <span>{day.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LoadBand({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="client-load-band">
+      <span>{label}</span>
+      <div><i style={{ width: `${Math.round(value)}%` }} /></div>
+      <strong>{fmt(value, 0)}%</strong>
+    </div>
   );
 }
 
@@ -193,6 +266,111 @@ function estimateEnergyKwh(series: DashboardSnapshot["series"]): number {
     total += ((previous.kw + current.kw) / 2) * hours;
   }
   return total;
+}
+
+function recentWindow(series: DashboardSnapshot["series"], hours: number): DashboardSnapshot["series"] {
+  const latest = series.reduce((best, point) => Math.max(best, timestampMs(point.iso)), 0);
+  if (!latest) return series.slice(-1500);
+  const cutoff = latest - hours * 3_600_000;
+  return series.filter((point) => timestampMs(point.iso) >= cutoff);
+}
+
+type DailyBucket = {
+  key: string;
+  label: string;
+  energyKwh: number;
+  peakKw: number;
+};
+
+type LongStats = {
+  days: DailyBucket[];
+  energyKwh: number;
+  peak: { kw: number; when: string } | null;
+  peakHourLabel: string;
+  bands: { lightPct: number; workingPct: number; peakPct: number };
+};
+
+function longTermStats(series: DashboardSnapshot["series"]): LongStats {
+  const usable = series.filter((point) => Number.isFinite(point.kw) && timestampMs(point.iso));
+  const energyKwh = estimateEnergyKwh(usable);
+  const peakPoint = usable.reduce<DashboardSnapshot["series"][number] | null>(
+    (best, point) => (!best || point.kw > best.kw ? point : best),
+    null
+  );
+  const peak = peakPoint
+    ? { kw: peakPoint.kw, when: new Date(peakPoint.iso ?? "").toLocaleString("en-ZA", { weekday: "short", hour: "2-digit", minute: "2-digit" }) }
+    : null;
+  const days = dailyBuckets(usable);
+  const peakHourLabel = peakHour(usable);
+  const bands = loadBands(usable);
+  return { days, energyKwh, peak, peakHourLabel, bands };
+}
+
+function dailyBuckets(series: DashboardSnapshot["series"]): DailyBucket[] {
+  const buckets = new Map<string, DashboardSnapshot["series"]>();
+  for (const point of series) {
+    const time = timestampMs(point.iso);
+    if (!time) continue;
+    const key = new Date(time).toISOString().slice(0, 10);
+    buckets.set(key, [...(buckets.get(key) ?? []), point]);
+  }
+  return [...buckets.entries()].slice(-7).map(([key, points]) => {
+    const date = new Date(`${key}T12:00:00Z`);
+    const label = date.toLocaleDateString("en-ZA", { weekday: "short" });
+    const peakKw = Math.max(...points.map((point) => point.kw), 0);
+    return { key, label, energyKwh: estimateEnergyKwh(points), peakKw };
+  });
+}
+
+function peakHour(series: DashboardSnapshot["series"]): string {
+  const buckets = new Map<number, { sum: number; count: number }>();
+  for (const point of series) {
+    const time = timestampMs(point.iso);
+    if (!time) continue;
+    const hour = new Date(time).getHours();
+    const bucket = buckets.get(hour) ?? { sum: 0, count: 0 };
+    bucket.sum += point.kw;
+    bucket.count += 1;
+    buckets.set(hour, bucket);
+  }
+  let bestHour = -1;
+  let bestAverage = -1;
+  for (const [hour, bucket] of buckets) {
+    const average = bucket.sum / Math.max(bucket.count, 1);
+    if (average > bestAverage) {
+      bestAverage = average;
+      bestHour = hour;
+    }
+  }
+  if (bestHour < 0) return "--";
+  return `${bestHour.toString().padStart(2, "0")}:00`;
+}
+
+function loadBands(series: DashboardSnapshot["series"]): LongStats["bands"] {
+  if (!series.length) return { lightPct: 0, workingPct: 0, peakPct: 0 };
+  const peak = Math.max(...series.map((point) => point.kw), 1);
+  const bands = series.reduce(
+    (acc, point) => {
+      const ratio = Math.max(0, point.kw) / peak;
+      if (ratio >= 0.75) acc.peak += 1;
+      else if (ratio >= 0.25) acc.working += 1;
+      else acc.light += 1;
+      return acc;
+    },
+    { light: 0, working: 0, peak: 0 }
+  );
+  const total = Math.max(series.length, 1);
+  return {
+    lightPct: (bands.light / total) * 100,
+    workingPct: (bands.working / total) * 100,
+    peakPct: (bands.peak / total) * 100
+  };
+}
+
+function timestampMs(value?: string | null): number {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
 }
 
 function freshnessStatus(value?: string | null): "live" | "delayed" | "offline" {

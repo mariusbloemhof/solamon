@@ -1576,7 +1576,7 @@ p.subtext {
 .client-load-chart {
   display: block;
   width: 100%;
-  min-height: 360px;
+  min-height: 330px;
 }
 
 .client-chart-plot {
@@ -1603,31 +1603,34 @@ p.subtext {
 
 .client-area {
   fill: url(#clientLoadFill);
+  opacity: 0.7;
 }
 
 .client-line {
   fill: none;
   stroke: oklch(48% 0.16 165);
-  stroke-width: 5;
+  stroke-width: 2.25;
   stroke-linecap: round;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .client-marker-line {
   stroke: var(--border-strong);
   stroke-dasharray: 5 8;
+  opacity: 0.7;
 }
 
 .client-peak-dot {
   fill: var(--surface);
   stroke: var(--warn);
-  stroke-width: 5;
+  stroke-width: 4;
 }
 
 .client-live-dot {
   fill: var(--accent);
   stroke: var(--surface);
-  stroke-width: 5;
+  stroke-width: 4;
 }
 
 .client-peak-label,
@@ -1660,6 +1663,151 @@ p.subtext {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
+}
+
+.client-longterm {
+  margin-top: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.client-longterm-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.client-longterm-head h2 {
+  margin: 3px 0 0;
+  font-size: 20px;
+  font-weight: 720;
+}
+
+.client-longterm-head > span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.client-longterm-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: 12px;
+}
+
+.client-trend-panel,
+.client-profile-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: oklch(99% 0.004 230);
+}
+
+.client-daily-chart {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 12px;
+  height: 220px;
+  margin-top: 12px;
+  padding: 8px 0 0;
+}
+
+.client-daily-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.client-daily-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 5px;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.client-daily-bars i {
+  width: 12px;
+  min-height: 4px;
+  border-radius: 999px 999px 0 0;
+}
+
+.client-daily-bars .energy {
+  background: oklch(64% 0.14 150);
+}
+
+.client-daily-bars .peak {
+  background: oklch(68% 0.15 85);
+}
+
+.client-daily-column span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.client-trend-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.client-trend-summary .client-kpi {
+  min-height: 132px;
+}
+
+.client-profile-card {
+  grid-column: 1 / -1;
+}
+
+.client-load-band {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.client-load-band span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.client-load-band div {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.client-load-band i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.client-load-band strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+.client-empty-inline {
+  display: grid;
+  min-height: 190px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .client-insight-card {
@@ -1906,6 +2054,10 @@ p.subtext {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .client-longterm-grid {
+    grid-template-columns: 1fr;
+  }
+
   .span-3,
   .span-4,
   .span-5,
@@ -2001,7 +2153,8 @@ p.subtext {
   }
 
   .client-topbar,
-  .client-chart-head {
+  .client-chart-head,
+  .client-longterm-head {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2012,12 +2165,22 @@ p.subtext {
 
   .client-kpi-grid,
   .client-insight-grid,
-  .client-detail-grid {
+  .client-detail-grid,
+  .client-trend-summary {
     grid-template-columns: 1fr;
   }
 
   .client-load-chart {
     min-height: 280px;
+  }
+
+  .client-daily-chart {
+    gap: 7px;
+    height: 180px;
+  }
+
+  .client-daily-bars i {
+    width: 9px;
   }
 
   .span-3,
