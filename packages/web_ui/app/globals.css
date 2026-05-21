@@ -2017,17 +2017,19 @@ p.subtext {
   min-height: 100vh;
   place-items: center;
   padding: 24px;
-  background: var(--bg);
+  background:
+    linear-gradient(135deg, oklch(98% 0.012 180), oklch(96% 0.01 230) 52%, oklch(99% 0.006 95));
 }
 
 .client-login-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  width: min(880px, 100%);
+  grid-template-columns: minmax(0, 1fr) 390px;
+  width: min(960px, 100%);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: 0 24px 70px oklch(20% 0.04 245 / 0.12);
 }
 
 .client-login-copy,
@@ -2038,7 +2040,7 @@ p.subtext {
 .client-login-copy {
   display: grid;
   align-content: center;
-  background: var(--bg);
+  background: linear-gradient(135deg, oklch(99% 0.012 160), oklch(96% 0.012 210));
 }
 
 .client-mark {
@@ -2048,7 +2050,8 @@ p.subtext {
 
 .client-login-copy h1 {
   margin: 12px 0 8px;
-  font-size: 32px;
+  max-width: 430px;
+  font-size: 38px;
   line-height: 1.05;
 }
 
@@ -2056,6 +2059,25 @@ p.subtext {
   max-width: 420px;
   margin: 0;
   color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.client-login-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 26px;
+}
+
+.client-login-points span {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: oklch(100% 0 0 / 0.7);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .client-login-form {
@@ -2065,8 +2087,8 @@ p.subtext {
 
 .client-access-card {
   display: grid;
-  gap: 6px;
-  padding: 14px;
+  gap: 8px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);

@@ -40,7 +40,7 @@ export function ClientLogin() {
       await loginToCloud(CLIENT_EMAIL, CLIENT_PASSWORD);
       router.push(params.get("callbackUrl") ?? "/client/sites/bench");
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : "Could not open the client view");
+      setError(exc instanceof Error ? exc.message : "Could not start the secure assessment session");
       setBusy(false);
     }
   }
@@ -51,19 +51,24 @@ export function ClientLogin() {
         <div className="client-login-copy">
           <span className="client-mark">Solamon</span>
           <h1>Live Energy Assessment</h1>
-          <p>View the live bench assessment with read-only access. Measurement data updates as it arrives from site.</p>
+          <p>Secure read-only access to the live site assessment. Measurements update continuously as data is received from the field.</p>
+          <div className="client-login-points">
+            <span>Live load profile</span>
+            <span>7 day usage trend</span>
+            <span>Read-only reporting</span>
+          </div>
         </div>
 
         <form className="client-login-form" onSubmit={submit}>
           <div className="client-access-card">
-            <span>Client access</span>
-            <strong>Bench assessment</strong>
-            <p>Use the prepared client view for Johan's review.</p>
+            <span>Secure assessment</span>
+            <strong>Client reporting portal</strong>
+            <p>Open the live read-only dashboard for the current site assessment.</p>
             <button className="button" disabled={busy} type="button" onClick={openClientView}>
-              {busy ? "Opening..." : "Open client view"}
+              {busy ? "Opening..." : "Open assessment"}
             </button>
           </div>
-          <div className="client-divider"><span>or sign in manually</span></div>
+          <div className="client-divider"><span>sign in with credentials</span></div>
           <label>
             <span>Email</span>
             <input className="input" name="email" type="email" autoComplete="username" defaultValue={CLIENT_EMAIL} />
@@ -76,7 +81,7 @@ export function ClientLogin() {
           <button className="button" disabled={busy} type="submit">
             {busy ? "Signing in..." : "Sign in"}
           </button>
-          <p className="subtext">Read-only access. No control actions are available from this view.</p>
+          <p className="subtext">This portal provides reporting access only. Device control actions are not available.</p>
         </form>
       </section>
     </main>
