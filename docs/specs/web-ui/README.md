@@ -10,7 +10,7 @@
 
 The Next.js + React + Tailwind web application — operator-facing dashboards, control panel, and admin browse views. Single-page-app feel (App Router with client transitions) but server-rendered first paint via React Server Components.
 
-Audience: **Marius and Johan** (operations users) in MVP. Client-tier (read-only customer view) is post-MVP.
+Audience: **Marius and Johan** (operations users) in the operator MVP, plus a deliberate read-only client portal for the first client-facing review.
 
 ## Files in this folder
 
