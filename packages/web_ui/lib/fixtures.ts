@@ -20,6 +20,9 @@ export type DashboardSnapshot = {
     deviceId: string;
     location: string;
     devices: DeviceOption[];
+    timezone?: string | null;
+    lastSeenAt?: string | null;
+    status?: DeviceOption["status"];
   };
   metrics: {
     activePowerKw: number;

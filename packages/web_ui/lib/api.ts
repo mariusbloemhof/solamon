@@ -106,7 +106,11 @@ export async function loginToCloud(email: string, password: string): Promise<Log
   return body;
 }
 
-export async function loadDashboardSnapshot(slug: string, preferredDeviceId?: string): Promise<DashboardSnapshot> {
+export async function loadDashboardSnapshot(
+  slug: string,
+  preferredDeviceId?: string,
+  rangeHours = 24
+): Promise<DashboardSnapshot> {
   const token = authToken();
   if (!token) {
     throw new Error("No cloud token yet");
@@ -119,7 +123,7 @@ export async function loadDashboardSnapshot(slug: string, preferredDeviceId?: st
 
   const [snapshot, series] = await Promise.all([
     apiFetch<DeviceSnapshot>(`/sites/${slug}/devices/${device.id}/snapshot`, token),
-    loadPowerSeries(slug, device.id, token, 24)
+    loadPowerSeries(slug, device.id, token, rangeHours)
   ]);
 
   return mapCloudSnapshot(site, device, snapshot, series);
@@ -143,10 +147,10 @@ async function loadPowerSeries(
   slug: string,
   deviceId: string,
   token: string,
-  hoursBack: number
+  rangeHours: number
 ): Promise<ReadingPoint[]> {
   const to = new Date();
-  const from = new Date(to.getTime() - hoursBack * 60 * 60 * 1000);
+  const from = new Date(to.getTime() - rangeHours * 60 * 60 * 1000);
   const query = new URLSearchParams({
     metric: "active_power_total",
     from: from.toISOString(),
@@ -188,7 +192,10 @@ function mapCloudSnapshot(
       deviceName: [device.manufacturer, device.model].filter(Boolean).join(" ") || device.name,
       deviceId: device.id,
       location: `${device.host}:${device.port} unit ${device.unit_id}`,
-      devices: site.devices.map(deviceOption)
+      devices: site.devices.map(deviceOption),
+      timezone: site.timezone,
+      lastSeenAt: device.last_seen_at ?? snapshot.snapshot_time,
+      status: device.status
     },
     metrics: {
       activePowerKw: num(m.active_power_total, 0),
