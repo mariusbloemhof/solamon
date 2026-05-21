@@ -156,12 +156,16 @@ function LongTermAnalysis({ stats }: { stats: LongStats }) {
           <span className="client-kicker">7 day usage intelligence</span>
           <h2>Operating trend</h2>
         </div>
-        <span>{stats.days.length ? `${stats.days.length} day view` : "Building history"}</span>
+        <span>{stats.coverageLabel}</span>
       </div>
       <div className="client-longterm-grid">
         <div className="client-trend-panel">
-          <div className="client-card-title"><span>Daily energy and peak load</span><Activity size={16} /></div>
-          {stats.days.length ? <DailyTrendChart days={stats.days} /> : <div className="client-empty-inline">Waiting for enough readings.</div>}
+          <div className="client-card-title"><span>Smoothed usage profile</span><Activity size={16} /></div>
+          {stats.trend.length ? <SevenDayUsageChart points={stats.trend} days={stats.days} /> : <div className="client-empty-inline">Waiting for enough readings.</div>}
+          <div className="client-trend-legend">
+            <span><i className="energy" /> Smoothed kW</span>
+            <span><i className="peak" /> Daily peak</span>
+          </div>
         </div>
         <div className="client-trend-summary">
           <ClientKpi title="7 day energy" value={fmt(stats.energyKwh, 0)} unit="kWh" icon={<BatteryCharging size={18} />} detail="Estimated from received active power" />
@@ -179,29 +183,49 @@ function LongTermAnalysis({ stats }: { stats: LongStats }) {
   );
 }
 
-function DailyTrendChart({ days }: { days: DailyBucket[] }) {
-  const maxEnergy = Math.max(...days.map((day) => day.energyKwh), 1);
-  const maxPeak = Math.max(...days.map((day) => day.peakKw), 1);
+function SevenDayUsageChart({ points, days }: { points: TrendPoint[]; days: DailyBucket[] }) {
+  const width = 860;
+  const height = 260;
+  const pad = { top: 20, right: 24, bottom: 38, left: 42 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const max = Math.max(...points.map((point) => point.kw), ...days.map((day) => day.peakKw), 1) * 1.12;
+  const usablePoints = points.length > 1 ? points : [];
+  const x = (index: number, count: number) => pad.left + (index / Math.max(count - 1, 1)) * plotW;
+  const y = (kw: number) => pad.top + (1 - Math.max(0, kw) / max) * plotH;
+  const line = smoothPath(usablePoints.map((point, index) => ({ x: x(index, usablePoints.length), y: y(point.kw) })));
+  const area = line ? `${line} L ${pad.left + plotW} ${pad.top + plotH} L ${pad.left} ${pad.top + plotH} Z` : "";
+  const dayX = (index: number) => pad.left + (index / Math.max(days.length - 1, 1)) * plotW;
+
   return (
-    <div className="client-daily-chart">
-      {days.map((day) => (
-        <div key={day.key} className="client-daily-column">
-          <div className="client-daily-bars">
-            <i
-              className="energy"
-              style={{ height: `${Math.max(4, (day.energyKwh / maxEnergy) * 100)}%` }}
-              title={`${fmt(day.energyKwh, 0)} kWh`}
-            />
-            <i
-              className="peak"
-              style={{ height: `${Math.max(4, (day.peakKw / maxPeak) * 100)}%` }}
-              title={`${fmt(day.peakKw)} kW peak`}
-            />
-          </div>
-          <span>{day.label}</span>
-        </div>
+    <svg className="client-usage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Smoothed 7 day usage chart">
+      <defs>
+        <linearGradient id="clientUsageFill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="oklch(62% 0.15 150 / 0.18)" />
+          <stop offset="100%" stopColor="oklch(62% 0.15 150 / 0.02)" />
+        </linearGradient>
+      </defs>
+      {[0, 0.5, 1].map((ratio) => (
+        <g key={ratio}>
+          <line x1={pad.left} x2={pad.left + plotW} y1={pad.top + plotH * ratio} y2={pad.top + plotH * ratio} className="client-grid-line" />
+          <text x={pad.left - 12} y={pad.top + plotH * ratio + 4} textAnchor="end" className="client-axis-label">
+            {fmt(max * (1 - ratio), 0)}
+          </text>
+        </g>
       ))}
-    </div>
+      {area ? <path d={area} className="client-usage-area" /> : null}
+      {line ? <path d={line} className="client-usage-line" /> : null}
+      {days.map((day, index) => (
+        <g key={day.key}>
+          <line x1={dayX(index)} x2={dayX(index)} y1={pad.top} y2={pad.top + plotH} className="client-day-line" />
+          {day.hasData ? <circle cx={dayX(index)} cy={y(day.peakKw)} r="4.5" className="client-day-peak" /> : null}
+          <text x={dayX(index)} y={height - 12} textAnchor="middle" className={day.hasData ? "client-axis-label" : "client-axis-label muted"}>
+            {day.label}
+          </text>
+        </g>
+      ))}
+      <text x={pad.left - 34} y={pad.top - 6} className="client-axis-unit">kW</text>
+    </svg>
   );
 }
 
@@ -280,13 +304,21 @@ type DailyBucket = {
   label: string;
   energyKwh: number;
   peakKw: number;
+  hasData: boolean;
+};
+
+type TrendPoint = {
+  time: number;
+  kw: number;
 };
 
 type LongStats = {
   days: DailyBucket[];
+  trend: TrendPoint[];
   energyKwh: number;
   peak: { kw: number; when: string } | null;
   peakHourLabel: string;
+  coverageLabel: string;
   bands: { lightPct: number; workingPct: number; peakPct: number };
 };
 
@@ -301,25 +333,87 @@ function longTermStats(series: DashboardSnapshot["series"]): LongStats {
     ? { kw: peakPoint.kw, when: new Date(peakPoint.iso ?? "").toLocaleString("en-ZA", { weekday: "short", hour: "2-digit", minute: "2-digit" }) }
     : null;
   const days = dailyBuckets(usable);
+  const trend = smoothedTrend(usable);
+  const daysWithData = days.filter((day) => day.hasData).length;
+  const coverageLabel = daysWithData >= 7 ? "7 day view" : `${daysWithData} of 7 days received`;
   const peakHourLabel = peakHour(usable);
   const bands = loadBands(usable);
-  return { days, energyKwh, peak, peakHourLabel, bands };
+  return { days, trend, energyKwh, peak, peakHourLabel, coverageLabel, bands };
 }
 
 function dailyBuckets(series: DashboardSnapshot["series"]): DailyBucket[] {
   const buckets = new Map<string, DashboardSnapshot["series"]>();
+  const latest = series.reduce((best, point) => Math.max(best, timestampMs(point.iso)), 0) || Date.now();
+  const end = startOfLocalDay(latest);
   for (const point of series) {
     const time = timestampMs(point.iso);
     if (!time) continue;
-    const key = new Date(time).toISOString().slice(0, 10);
+    const key = localDateKey(time);
     buckets.set(key, [...(buckets.get(key) ?? []), point]);
   }
-  return [...buckets.entries()].slice(-7).map(([key, points]) => {
-    const date = new Date(`${key}T12:00:00Z`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const time = end - (6 - index) * 86_400_000;
+    const key = localDateKey(time);
+    const points = buckets.get(key) ?? [];
+    const hasData = points.length > 0;
+    const date = new Date(time);
     const label = date.toLocaleDateString("en-ZA", { weekday: "short" });
     const peakKw = Math.max(...points.map((point) => point.kw), 0);
-    return { key, label, energyKwh: estimateEnergyKwh(points), peakKw };
+    return { key, label, energyKwh: estimateEnergyKwh(points), peakKw, hasData };
   });
+}
+
+function smoothedTrend(series: DashboardSnapshot["series"]): TrendPoint[] {
+  const usable = series
+    .map((point) => ({ time: timestampMs(point.iso), kw: point.kw }))
+    .filter((point) => point.time && Number.isFinite(point.kw))
+    .sort((a, b) => a.time - b.time);
+  if (usable.length < 2) return usable;
+
+  const bucketMinutes = 60;
+  const buckets = new Map<number, { sum: number; count: number }>();
+  for (const point of usable) {
+    const bucketTime = Math.floor(point.time / (bucketMinutes * 60_000)) * bucketMinutes * 60_000;
+    const bucket = buckets.get(bucketTime) ?? { sum: 0, count: 0 };
+    bucket.sum += point.kw;
+    bucket.count += 1;
+    buckets.set(bucketTime, bucket);
+  }
+
+  const hourly = [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([time, bucket]) => ({ time, kw: bucket.sum / Math.max(bucket.count, 1) }));
+
+  return hourly.map((point, index) => {
+    const window = hourly.slice(Math.max(0, index - 2), Math.min(hourly.length, index + 3));
+    const kw = window.reduce((sum, item) => sum + item.kw, 0) / Math.max(window.length, 1);
+    return { time: point.time, kw };
+  });
+}
+
+function smoothPath(points: Array<{ x: number; y: number }>): string {
+  if (!points.length) return "";
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  return points.reduce((path, point, index) => {
+    if (index === 0) return `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+    const previous = points[index - 1];
+    const midX = (previous.x + point.x) / 2;
+    return `${path} Q ${previous.x.toFixed(1)} ${previous.y.toFixed(1)} ${midX.toFixed(1)} ${((previous.y + point.y) / 2).toFixed(1)} T ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+  }, "");
+}
+
+function localDateKey(time: number): string {
+  const date = new Date(time);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function startOfLocalDay(time: number): number {
+  const date = new Date(time);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
 }
 
 function peakHour(series: DashboardSnapshot["series"]): string {
