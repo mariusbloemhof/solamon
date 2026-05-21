@@ -111,12 +111,13 @@ function ClientAssessment({ snapshot, longSeries }: { snapshot: DashboardSnapsho
         </div>
       </div>
 
-      <div className="client-kpi-grid">
-        <ClientKpi title="Current load" value={fmt(snapshot.metrics.activePowerKw)} unit="kW" icon={<Zap size={18} />} detail="Latest received reading" />
-        <ClientKpi title="Peak load" value={stats.peak ? fmt(stats.peak.kw) : "--"} unit="kW" icon={<Gauge size={18} />} detail={stats.peak ? `At ${peakTime}` : "Waiting for data"} />
-        <ClientKpi title="Average load" value={fmt(stats.averageKw)} unit="kW" icon={<Activity size={18} />} detail="Across this 24h window" />
-        <ClientKpi title="Energy measured" value={fmt(energy)} unit="kWh" icon={<BatteryCharging size={18} />} detail="Estimated from active power trace" />
-        <ClientKpi title="Power factor" value={pf ? fmt(pf, 2) : "--"} unit="" icon={<ShieldCheck size={18} />} detail={pf >= 0.9 ? "Healthy operating range" : "Needs review"} />
+      <div className="client-gauge-strip">
+        <ClientGaugeTile label="Total load" value={snapshot.metrics.activePowerKw} unit="kW" max={Math.max((stats.peak?.kw ?? snapshot.metrics.activePowerKw) * 1.2, 1)} detail={`avg ${fmt(stats.averageKw)} kW`} />
+        <ClientGaugeTile label="Daily peak" value={stats.peak?.kw ?? 0} unit="kW" max={Math.max((stats.peak?.kw ?? 1) * 1.2, 1)} detail={stats.peak ? `at ${peakTime}` : "Waiting for data"} tone="warn" />
+        <ClientGaugeTile label="Energy measured" value={energy} unit="kWh" max={Math.max(energy * 1.25, 1)} detail="estimated from trace" />
+        <ClientGaugeTile label="Frequency" value={snapshot.metrics.frequencyHz} unit="Hz" max={60} detail="target 50.00 Hz" />
+        <ClientGaugeTile label="Power factor" value={pf} unit="" max={1} detail="total meter PF" />
+        <ClientGaugeTile label="Data freshness" value={freshnessScore(snapshot.site.lastSeenAt)} unit="%" max={100} detail={`last ${relativeTime(snapshot.site.lastSeenAt)}`} />
       </div>
 
       <ClientLoadProfileChart data={snapshot.series} />
@@ -262,6 +263,39 @@ function ClientKpi({ title, value, unit, icon, detail }: { title: string; value:
       <div className="client-card-title"><span>{title}</span>{icon}</div>
       <div className="client-kpi-value"><strong>{value}</strong>{unit ? <span>{unit}</span> : null}</div>
       <p>{detail}</p>
+    </div>
+  );
+}
+
+function ClientGaugeTile({
+  label,
+  value,
+  unit,
+  max,
+  detail,
+  tone = "good"
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  max: number;
+  detail: string;
+  tone?: "good" | "warn";
+}) {
+  const normalized = Math.max(0, Math.min(1, value / Math.max(max, 1)));
+  const dash = `${Math.round(normalized * 100)} 100`;
+  return (
+    <div className="client-gauge-tile">
+      <div className="client-gauge-label"><span className={`dot ${tone}`} />{label}</div>
+      <svg viewBox="0 0 120 72" aria-hidden="true">
+        <path className="client-gauge-track" d="M18 58a42 42 0 0 1 84 0" pathLength="100" />
+        <path className={`client-gauge-fill ${tone}`} d="M18 58a42 42 0 0 1 84 0" pathLength="100" strokeDasharray={dash} />
+      </svg>
+      <div className="client-gauge-value">
+        <strong>{fmt(value, unit === "%" ? 0 : unit === "" ? 2 : 1)}</strong>
+        {unit ? <span>{unit}</span> : null}
+      </div>
+      <div className="client-gauge-detail">{detail}</div>
     </div>
   );
 }
@@ -501,6 +535,16 @@ function relativeTime(value?: string | null): string {
   const mins = Math.round(ageSec / 60);
   if (mins < 60) return `${mins} min ago`;
   return `${Math.round(mins / 60)}h ago`;
+}
+
+function freshnessScore(value?: string | null): number {
+  if (!value) return 0;
+  const ageSec = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (!Number.isFinite(ageSec)) return 0;
+  if (ageSec <= 60) return 100;
+  if (ageSec <= 300) return 75;
+  if (ageSec <= 900) return 35;
+  return 0;
 }
 
 function qualitySummary(snapshot: DashboardSnapshot): string {

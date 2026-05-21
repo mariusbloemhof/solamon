@@ -1548,6 +1548,102 @@ p.subtext {
   font-size: 11.5px;
 }
 
+.client-gauge-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.client-gauge-tile {
+  min-width: 0;
+  padding: 22px 14px 20px;
+  border-right: 1px solid var(--border);
+  text-align: center;
+}
+
+.client-gauge-tile:last-child {
+  border-right: 0;
+}
+
+.client-gauge-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.client-gauge-label .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.client-gauge-label .dot.warn {
+  background: var(--warn);
+}
+
+.client-gauge-tile svg {
+  display: block;
+  width: min(128px, 100%);
+  margin: 16px auto 2px;
+}
+
+.client-gauge-track,
+.client-gauge-fill {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 10;
+}
+
+.client-gauge-track {
+  stroke: var(--border);
+}
+
+.client-gauge-fill {
+  stroke: var(--accent);
+}
+
+.client-gauge-fill.warn {
+  stroke: var(--warn);
+}
+
+.client-gauge-value {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+.client-gauge-value strong {
+  font-family: var(--font-mono);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.client-gauge-value span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.client-gauge-detail {
+  margin-top: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .client-chart-frame {
   padding: 18px;
 }
@@ -2083,6 +2179,18 @@ p.subtext {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .client-gauge-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .client-gauge-tile:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .client-gauge-tile:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--border);
+  }
+
   .client-longterm-grid {
     grid-template-columns: 1fr;
   }
@@ -2197,6 +2305,20 @@ p.subtext {
   .client-detail-grid,
   .client-trend-summary {
     grid-template-columns: 1fr;
+  }
+
+  .client-gauge-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .client-gauge-tile,
+  .client-gauge-tile:nth-child(3n) {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .client-gauge-tile:last-child {
+    border-bottom: 0;
   }
 
   .client-load-chart {
