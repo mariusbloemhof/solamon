@@ -164,7 +164,7 @@ function LongTermAnalysis({ stats }: { stats: LongStats }) {
           {stats.trend.length ? <SevenDayUsageChart points={stats.trend} days={stats.days} /> : <div className="client-empty-inline">Waiting for enough readings.</div>}
           <div className="client-trend-legend">
             <span><i className="energy" /> Smoothed kW</span>
-            <span><i className="peak" /> Daily peak</span>
+            <span><i className="peak" /> Daily peak markers</span>
           </div>
         </div>
         <div className="client-trend-summary">
@@ -196,6 +196,7 @@ function SevenDayUsageChart({ points, days }: { points: TrendPoint[]; days: Dail
   const line = smoothPath(usablePoints.map((point, index) => ({ x: x(index, usablePoints.length), y: y(point.kw) })));
   const area = line ? `${line} L ${pad.left + plotW} ${pad.top + plotH} L ${pad.left} ${pad.top + plotH} Z` : "";
   const dayX = (index: number) => pad.left + (index / Math.max(days.length - 1, 1)) * plotW;
+  const labelablePeaks = days.filter((day) => day.hasData && day.peakKw > 0);
 
   return (
     <svg className="client-usage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Smoothed 7 day usage chart">
@@ -218,12 +219,31 @@ function SevenDayUsageChart({ points, days }: { points: TrendPoint[]; days: Dail
       {days.map((day, index) => (
         <g key={day.key}>
           <line x1={dayX(index)} x2={dayX(index)} y1={pad.top} y2={pad.top + plotH} className="client-day-line" />
-          {day.hasData ? <circle cx={dayX(index)} cy={y(day.peakKw)} r="4.5" className="client-day-peak" /> : null}
+          {day.hasData ? (
+            <circle cx={dayX(index)} cy={y(day.peakKw)} r="4.5" className="client-day-peak">
+              <title>{`${day.label} daily peak: ${fmt(day.peakKw)} kW`}</title>
+            </circle>
+          ) : null}
           <text x={dayX(index)} y={height - 12} textAnchor="middle" className={day.hasData ? "client-axis-label" : "client-axis-label muted"}>
             {day.label}
           </text>
         </g>
       ))}
+      {labelablePeaks.slice(-3).map((day) => {
+        const index = days.indexOf(day);
+        const px = dayX(index);
+        const py = y(day.peakKw);
+        const anchor = index >= days.length - 2 ? "end" : "start";
+        const textX = anchor === "end" ? px - 8 : px + 8;
+        return (
+          <text key={`${day.key}-peak-label`} x={textX} y={Math.max(pad.top + 14, py - 8)} textAnchor={anchor} className="client-day-peak-label">
+            Peak {fmt(day.peakKw)} kW
+          </text>
+        );
+      })}
+      <text x={pad.left + plotW - 4} y={pad.top + 14} textAnchor="end" className="client-peak-note">
+        Gold points mark each day's peak load
+      </text>
       <text x={pad.left - 34} y={pad.top - 6} className="client-axis-unit">kW</text>
     </svg>
   );
