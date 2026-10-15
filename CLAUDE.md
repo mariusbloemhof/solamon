@@ -11,7 +11,7 @@ This file is auto-loaded by Claude Code. It gives any Claude instance full worki
 **Repo:** github.com/mariusbloemhof/solamon  
 **Phase:** Build — MVP implemented and **live at <https://cloud.amendi.dev>**, bench Acuvim streaming telemetry. Sections below on discovery/architecture remain valid background.
 
-**Start here:** [`STATUS.md`](STATUS.md) for build progress (last updated May — may lag), and [`docs/specs/infrastructure/CURRENT_STATE.md`](docs/specs/infrastructure/CURRENT_STATE.md) — especially **§9** — for what is actually deployed, the Aug–Sep 2026 outage, how to reach the box, and open items. Live-infrastructure commands (AWS CLI, SSH over Tailscale, Cloudflare API) need Marius's laptop credentials; from a cloud session, run them locally via the desktop app.
+**Start here:** [`STATUS.md`](STATUS.md) for build progress (last updated May — may lag), and [`docs/specs/infrastructure/CURRENT_STATE.md`](docs/specs/infrastructure/CURRENT_STATE.md) — especially **§9** — for what is actually deployed, the Aug–Sep 2026 outage, how to reach the box, and open items. Live-infrastructure commands (AWS CLI, SSH over Tailscale, Cloudflare API) run on Marius's local machine. That access is set up as needed and **Marius facilitates the secrets**: say what's needed and why, and never ask for a secret in chat (see §9.3).
 
 Johan's business model: owns and installs solar PV + BESS systems at commercial/industrial client sites; clients pay for energy and services delivered. He needs software to scale the business.
 

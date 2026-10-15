@@ -320,6 +320,16 @@ When images are pushed and an actual workload runs, ECR storage + DB + log volum
 
 ### 9.3 Working on this from a Claude Code cloud session
 
-A cloud session has the repo (GitHub) but none of the laptop's credentials. Anything touching live infrastructure — AWS CLI, SSH over Tailscale, the Cloudflare API — must run **on Marius's laptop**, via the desktop app's local-run approval. Repo-only work (code, docs, tests, PRs) can run in the cloud sandbox.
+A cloud session has the repo (GitHub) but none of the infrastructure credentials. Repo-only work (code, docs, tests, PRs) runs in the cloud sandbox.
+
+Anything touching live infrastructure runs **on Marius's local machine**, via the desktop app's local-run approval:
+
+| Access | What it's for |
+|---|---|
+| AWS CLI, profile `solamon`, region `af-south-1` | EC2 state, start/stop, CloudTrail, ECR, S3 backups |
+| Tailscale | the only SSH path to the box: `ssh ubuntu@100.77.122.23` |
+| Cloudflare API token | DNS for `amendi.dev` |
+
+**This local access is set up as needed, and Marius facilitates the secrets.** Don't assume a profile, key, token or tailnet connection is already present, and never ask for a secret to be pasted into chat. When a task needs one, say which access is needed and why, and Marius provides it on the local machine. The laptop paths in §4 describe the original setup and may not match the machine in use.
 
 **Open items (§8):** dashboard staleness (9), stale user-data (8), `pi-ecr-puller` key file (6), rotate the Cloudflare token (1), and a first CI release so deployments are reproducible (§7).
