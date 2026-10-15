@@ -1,8 +1,8 @@
 # Infrastructure — current state (as-built)
 
-**As of:** 2026-05-08
+**As of:** 2026-05-08 (provisioning) · operations updated 2026-10-15 — see §9 for the incident log and handover
 **Owner:** Marius Bloemhof
-**Status:** All cloud infrastructure provisioned and verified. Application code (cloud_app, edge_agent) not yet implemented — see "What's NOT provisioned" below.
+**Status:** All cloud infrastructure provisioned and verified. The full cloud stack (Caddy, Postgres/Timescale, Mosquitto, cloud-app, web-ui) has run on the EC2 since 2026-05-08 and is live at <https://cloud.amendi.dev>. §7 below is the original May-08 snapshot and is now historical.
 
 This document is the **single source of truth for what actually exists in the real world**. The specs in this folder describe intended behaviour; this file lists the resources that have been created. When the cloud-bootstrap or edge-install scripts run, they consume these resource IDs.
 
@@ -93,13 +93,15 @@ Note: AWS Budgets does not support ZAR despite billing being in ZAR. The spec's 
 | 443/tcp | `0.0.0.0/0` | HTTPS — web UI + API + WebSocket |
 | 8883/tcp | `0.0.0.0/0` | MQTT TLS — Pi connections |
 
-The bootstrap-time public-IP SSH rule (`156.155.54.131/32`) was deliberately revoked once Tailscale SSH was confirmed working. To re-add temporarily for emergency access:
+The bootstrap-time public-IP SSH rule (`156.155.54.131/32`) was deliberately revoked once Tailscale SSH was confirmed working.
 
-```powershell
-$myIp = (Invoke-RestMethod -Uri 'https://checkip.amazonaws.com' -TimeoutSec 5).Trim()
-aws --profile solamon --region af-south-1 ec2 authorize-security-group-ingress `
-    --group-id sg-03a9e7b940e0c9aa1 --protocol tcp --port 22 --cidr "$myIp/32"
-```
+> **Opening port 22 in the security group does NOT give you SSH.** The bootstrap also configures **ufw on the host**: `default deny incoming`, with SSH allowed **only on `tailscale0`** (`scripts/solamon-cloud-bootstrap.sh:427-435`). A security-group rule for your IP gets you past AWS and is then dropped by ufw. This was proven the hard way on 2026-09-04.
+>
+> **If the tailnet path is down, the only ways in are:**
+> 1. **User-data recovery boot** — stop the instance, set cloud-init user-data with `cloud_final_modules: [[scripts-user, always]]` and a `runcmd`, start it, and read the output with `aws ec2 get-console-output --latest`. Clear the user-data afterwards (needs another stop). Gotchas: AWS CLI v2 rejects `--value fileb://…` *and echoes the whole file into the error*, so pass `--value "$(base64 -w0 file)"` instead and verify by decoding `describe-instance-attribute --attribute userData`. Validate the YAML first: a single bad escape (`\s` inside a double-quoted scalar) makes cloud-init discard the entire cloud-config silently.
+> 2. **Detach the root volume** and mount it on a rescue instance.
+>
+> SSM Session Manager is **not** an option: the agent is unregistered and the account has no SSM instance-management role (console log: `Systems Manager's instance management role is not configured for account`).
 
 ---
 
@@ -143,12 +145,12 @@ Record ID `40a6086ff01fa9238c31232ac8da0e9a`. The record **must remain DNS-only*
 
 | Device | Tailnet IP | Tag | OS |
 |---|---|---|---|
-| `marius-laptop` | `100.65.186.104` | `tag:admin` | Windows |
-| `solamon-cloud-prod` | `100.77.122.23` | `tag:cloud` | Linux (Ubuntu 24.04) |
+| `marius-laptop` | `100.65.186.104` | *(user-owned, not tagged — see ACL summary)* | Windows |
+| `solamon-cloud-prod` | `100.77.122.23` | `tag:cloud`, **key expiry disabled** (2026-09-04) | Linux (Ubuntu 24.04) |
 
 ### ACL summary
 
-`tag:admin` may SSH to `tag:pi` and `tag:cloud` as users `pi`, `ubuntu`, `solamon`, `root`. No `pi → pi` or `pi → cloud` rules — the Pi-to-cloud channel is the public MQTT TLS, not the tailnet. Full ACL JSON is what was pasted into <https://login.tailscale.com/admin/acls>.
+`tag:admin` may SSH to `tag:pi` and `tag:cloud` as users `pi`, `ubuntu`, `solamon`, `root`. **As of 2026-09-04 the laptop is user-owned rather than `tag:admin`**, so the policy also grants `autogroup:member → tag:cloud:*, tag:pi:*` (acls) and `autogroup:member → tag:pi, tag:cloud` as `ubuntu`/`root` (ssh). Without those two rules the laptop cannot reach the tagged EC2 at all. Do **not** fix this by tagging the laptop: a tagged laptop stops being `autogroup:member` and loses access to Marius's other personal devices. `tagOwners` must exist for all three tags, or the auth-key page won't offer them. No `pi → pi` or `pi → cloud` rules — the Pi-to-cloud channel is the public MQTT TLS, not the tailnet. Full ACL JSON is what was pasted into <https://login.tailscale.com/admin/acls>.
 
 ### Auth keys (status)
 
@@ -190,8 +192,8 @@ ssh ubuntu@100.77.122.23
 # Via Tailscale MagicDNS (works once MagicDNS is enabled in admin)
 ssh ubuntu@solamon-cloud-prod
 
-# Via public IP — DOES NOT WORK (port 22 closed from internet by SG)
-# Only works if you re-authorise your current IP first (see "emergency access" above).
+# Via public IP — DOES NOT WORK, even with a security-group rule: host ufw allows SSH
+# only on tailscale0. See the warning in §1.6 for the real recovery paths.
 ```
 
 Tailscale SSH on the EC2 means you don't need the bootstrap key after the tailnet join — Tailscale identity authenticates. The bootstrap key is still in `C:\Users\Marius\.ssh\solamon-bootstrap` as belt-and-braces fallback.
@@ -265,6 +267,8 @@ When images are pushed and an actual workload runs, ECR storage + DB + log volum
 
 ## 7. What's NOT provisioned (the wall)
 
+> **Historical (2026-05-08 snapshot).** The deployment rows below were resolved in May: the stack is deployed and running. `release.yml` exists but **has never run** — there are no `v*` tags, so the running containers were built and deployed by hand and nothing is reproducible from CI yet.
+
 | Pending | Required for | Tracked |
 |---|---|---|
 | `solamon-cloud-app` Docker image | `solamon-cloud-bootstrap.sh` to run | needs `packages/cloud_app/` implementation (SOL-8) |
@@ -284,4 +288,38 @@ When images are pushed and an actual workload runs, ECR storage + DB + log volum
 3. **The infrastructure spec docs reference `cloud.solamon.bloemhof.dev`.** Reality is `cloud.amendi.dev`. Spec docs not yet updated; bootstrap script's `--domain` argument needs to be set to the real value at run-time.
 4. **`solamon-cloud-bootstrap.sh` has unfixed bugs** flagged in `review-2026-05-02.md` — Mosquitto TLS cert path, password file lifecycle, migration step. These must be addressed before first run.
 5. **AWS CLI v2** is what's installed. Per the infrastructure review, the spec's `apt-get install awscli` (v1) on Pis should be migrated to v2 too — not yet addressed.
-6. **`pi-ecr-puller` IAM keys** were saved to `D:\install\pi-ecr-puller-keys.txt`. Confirm this file has been moved to 1Password and deleted from disk.
+6. **`pi-ecr-puller` IAM keys** were saved to `D:\install\pi-ecr-puller-keys.txt`. **Still on disk as of 2026-09-04** — move to 1Password and delete.
+7. **Cron filename mismatch.** The Mosquitto cert-reload cron is installed as `/etc/cron.d/solamon-mosquitto-reload`, but `cloud-bootstrap.md` §11 and `caddy-and-dns.md` §6.1 call it `solamon-mosquitto-cert-reload`. It works: the cert renewed 2026-09-05 and Mosquitto on 8883 serves the renewed cert. Check cron by **content**, not expected filename — it was misdiagnosed as missing once.
+8. **Stale user-data** on `i-028b3a7906dcd4185` from the 2026-09-04 recovery attempt. Its auth key is revoked, so it's inert, but clear it at the next planned stop.
+9. **Dashboard shows stale data as live.** The web UI renders the newest stored reading as `LIVE NOW` with "100% telemetry quality confidence" regardless of age. On 2026-09-04 it showed a 51-day-old reading that way, driving a sizing recommendation. Needs a staleness cutoff before clients see it.
+
+---
+
+## 9. Incident log and handover (2026-10-15)
+
+### 9.1 Outage 2026-08-18 → 2026-09-04
+
+| When (UTC) | What |
+|---|---|
+| 2026-07-15 14:41 | Last reading from the bench Acuvim (`solamon/bench/acuvim/CLD56020398/data`). The meter stopped connecting at all — no auth or TLS failures were logged, just silence. The cloud was healthy and received nothing for 34 days. |
+| 2026-08-18 22:46 | AWS account `556671502751` **suspended**: the EC2 was stopped and both IAM access keys (`Marius`, `pi-ecr-puller`) went inactive. Authoritative source is `last -x reboot` on the box (ran May 8 → Aug 18, 102 days), not CloudTrail. |
+| 2026-09-04 | Marius reinstated the account and reactivated the keys. The first `start-instances` failed with `Client.InvalidKMSKey`; CloudTrail showed `kms:CreateGrant` denied *"because the resource owner's account is not active"* while reinstatement propagated. A retry ~10 minutes later succeeded. |
+| 2026-09-04 | 4 of 5 containers came back. `solamon-mosquitto` did not (exit 0 at the shutdown instant; `unless-stopped` didn't re-trigger, cause unknown) and was started manually with `docker compose -f /opt/solamon/docker-compose.yml up -d mosquitto`. **After any unplanned stop, check all five containers.** |
+| 2026-09-04 | Tailscale node key expiry disabled on `solamon-cloud-prod` (it would have lapsed 2026-11-04 and cut the only SSH path). ACL rules for user-owned devices added (§3). |
+| 2026-09-23 14:35 | Bench meter resumed publishing. **No backfill** — the AXM-WEB2 did not replay its offline cache, so 2026-07-15 → 2026-09-23 is a permanent gap. |
+
+**Lesson:** this is a personal AWS account billed to a card. A suspension stops everything silently, and AWS terminates resources about 90 days into a suspension — including the EBS volume and the `solamon-backup-prod` backups in the same account. Keep the payment method current, and make sure the budget-alert mailbox is actually read.
+
+### 9.2 Verified state on 2026-10-15
+
+- `https://cloud.amendi.dev/client/login` → 200; `/api/v1/health` → `{"status":"ok","db":"ok","mqtt":"ok"}`
+- All 5 containers up since 2026-09-04
+- TLS cert renewed 2026-09-05, valid to 2026-12-04, served on both 443 and 8883
+- Telemetry flowing: ~153k readings/day since 2026-09-24. The 90-day retention means stored data now starts 2026-09-23.
+- Host crons present: `solamon-mosquitto-reload` (03:30), `solamon-pg-backup` (03:00), `solamon-ecr-refresh` (every 6 h)
+
+### 9.3 Working on this from a Claude Code cloud session
+
+A cloud session has the repo (GitHub) but none of the laptop's credentials. Anything touching live infrastructure — AWS CLI, SSH over Tailscale, the Cloudflare API — must run **on Marius's laptop**, via the desktop app's local-run approval. Repo-only work (code, docs, tests, PRs) can run in the cloud sandbox.
+
+**Open items (§8):** dashboard staleness (9), stale user-data (8), `pi-ecr-puller` key file (6), rotate the Cloudflare token (1), and a first CI release so deployments are reproducible (§7).

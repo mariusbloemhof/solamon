@@ -9,7 +9,9 @@ This file is auto-loaded by Claude Code. It gives any Claude instance full worki
 **Client:** Johan Wolmarans — solar energy business, South Africa  
 **Consultant:** Marius Bloemhof — software architect, technical lead  
 **Repo:** github.com/mariusbloemhof/solamon  
-**Phase:** Discovery complete → Architecture drafted → Awaiting Johan Q&A → PRD next
+**Phase:** Build — MVP implemented and **live at <https://cloud.amendi.dev>**, bench Acuvim streaming telemetry. Sections below on discovery/architecture remain valid background.
+
+**Start here:** [`STATUS.md`](STATUS.md) for build progress (last updated May — may lag), and [`docs/specs/infrastructure/CURRENT_STATE.md`](docs/specs/infrastructure/CURRENT_STATE.md) — especially **§9** — for what is actually deployed, the Aug–Sep 2026 outage, how to reach the box, and open items. Live-infrastructure commands (AWS CLI, SSH over Tailscale, Cloudflare API) need Marius's laptop credentials; from a cloud session, run them locally via the desktop app.
 
 Johan's business model: owns and installs solar PV + BESS systems at commercial/industrial client sites; clients pay for energy and services delivered. He needs software to scale the business.
 
@@ -183,6 +185,6 @@ See `requirements/QUESTIONS_FOR_JOHAN.md` for full structured list. Critical blo
 - Device spec files: `discovery/specs/<device>_<detail>.md`
 - Architecture docs: `architecture/`
 - Requirements: `requirements/`
-- No implementation code yet — this repo is currently design/documentation only
+- Implementation lives in `packages/`: `profile_loader`, `cloud_app`, `edge_agent` (Python), `web_ui` (Next.js); implementation plans in `docs/superpowers/plans/`
 - Branch: `master`, remote: `github.com/mariusbloemhof/solamon`
 - Commit messages: descriptive, include co-author line for Claude
