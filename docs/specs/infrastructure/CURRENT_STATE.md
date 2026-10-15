@@ -330,6 +330,6 @@ Anything touching live infrastructure runs **on Marius's local machine**, via th
 | Tailscale | the only SSH path to the box: `ssh ubuntu@100.77.122.23` |
 | Cloudflare API token | DNS for `amendi.dev` |
 
-**This local access is set up as needed, and Marius facilitates the secrets.** Don't assume a profile, key, token or tailnet connection is already present, and never ask for a secret to be pasted into chat. When a task needs one, say which access is needed and why, and Marius provides it on the local machine. The laptop paths in §4 describe the original setup and may not match the machine in use.
+**This local access is set up as needed, and Marius facilitates the secrets.** All Solamon secrets are in the Ironwire Client Zone vault (workspace Amendi, project Solamon). You request a secret per use and Marius approves it — see [`SECRETS.md`](SECRETS.md) for the procedure. Don't assume a profile, key, token or tailnet connection is already present, and never ask for a secret to be pasted into chat. When a task needs one, say which access is needed and why, and Marius provides it on the local machine. The laptop paths in §4 describe the original setup and may not match the machine in use.
 
 **Open items (§8):** dashboard staleness (9), stale user-data (8), `pi-ecr-puller` key file (6), rotate the Cloudflare token (1), and a first CI release so deployments are reproducible (§7).
